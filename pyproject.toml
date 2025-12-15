@@ -37,6 +37,7 @@ dev = [
 Homepage = "https://github.com/Hmbown/Aleph-RLM"
 
 [project.scripts]
+aleph = "aleph.cli:main"
 aleph-mcp = "aleph.mcp.server:main"
 aleph-mcp-local = "aleph.mcp.local_server:main"
 
