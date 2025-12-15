@@ -98,6 +98,17 @@ asyncio.run(main())
    - `FINAL_VAR(variable_name)`
 7. Final output includes evidence citations for transparency.
 
+## Provenance Tracking
+
+Aleph automatically tracks evidence as you explore:
+
+- **`search_context`** matches are logged with patterns and line ranges
+- **`cite()`** helper lets you manually tag important findings with notes
+- **`get_evidence`** retrieves your evidence trail with source filtering (`search`, `peek`, `exec`, `manual`)
+- **`finalize`** includes citations in your final answer
+
+This makes Aleph suitable for **auditable analysis** where you need to show your work—legal research, compliance analysis, technical due diligence, etc.
+
 ## Security
 
 The Aleph sandbox is **best-effort** and is not formally hardened.
