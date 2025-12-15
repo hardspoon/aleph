@@ -1,0 +1,30 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.deepeval/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Environments
+.env
+.venv/
+venv/
+ENV/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Local MCP host configs (per-user)
+.mcp.json
+
