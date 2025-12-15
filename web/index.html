@@ -3,19 +3,30 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Aleph RLM - Recursive Language Model Reasoning</title>
-  <meta name="description" content="MCP server for recursive LLM reasoning. Load context once, iterate with search/code/think tools, converge on answers with full provenance.">
+  <title>Aleph - Recursive Language Model Reasoning</title>
+  <meta name="description" content="MCP server for recursive LLM reasoning. Load context, iterate with search/code/think tools, converge on answers with provenance.">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://aleph-web.pages.dev/">
+  <meta property="og:title" content="Aleph - Recursive Language Model Reasoning">
+  <meta property="og:description" content="The Whole in Parts. Recursive language model reasoning for documents with full provenance tracking.">
+
+  <!-- Fonts: Match Hegelion exactly -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400..800;1,400..800&family=Inter:wght@400..800&family=JetBrains+Mono:wght@400..700&display=swap" rel="stylesheet">
+
   <style>
     :root {
-      --bg: #f5f3ef;
-      --bg-dark: #1a1a1a;
-      --text: #1a1a1a;
-      --text-light: #f5f3ef;
-      --accent: #2d5a3d;
-      --border: #1a1a1a;
+      --bg: #F5F5F0;
+      --bg-dark: #0A0A0A;
+      --text: #0A0A0A;
+      --text-light: #F5F5F0;
+      --border: #0A0A0A;
+      --font-sans: 'Inter', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+      --font-serif: 'EB Garamond', serif;
     }
 
     * {
@@ -25,14 +36,17 @@
     }
 
     body {
-      font-family: 'IBM Plex Mono', monospace;
+      font-family: var(--font-serif);
       background: var(--bg);
       color: var(--text);
       line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
 
-    .serif {
-      font-family: 'Playfair Display', serif;
+    ::selection {
+      background-color: #000000;
+      color: #FFFFFF;
     }
 
     /* Navigation */
@@ -45,21 +59,23 @@
     }
 
     .logo {
-      font-size: 1.1rem;
-      font-weight: 500;
-      letter-spacing: 0.1em;
+      font-family: var(--font-sans);
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: 0.15em;
     }
 
     .nav-links {
       display: flex;
-      gap: 2.5rem;
+      gap: 2rem;
     }
 
     .nav-links a {
+      font-family: var(--font-mono);
       color: var(--text);
       text-decoration: none;
       font-size: 0.85rem;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.02em;
     }
 
     .nav-links a:hover {
@@ -84,29 +100,31 @@
 
     .version-badge {
       display: inline-block;
+      font-family: var(--font-mono);
       border: 1px solid var(--border);
-      padding: 0.4rem 0.8rem;
+      padding: 0.5rem 1rem;
       font-size: 0.75rem;
       letter-spacing: 0.1em;
-      margin-bottom: 2rem;
+      margin-bottom: 2.5rem;
       width: fit-content;
     }
 
     h1 {
-      font-family: 'Playfair Display', serif;
-      font-size: 4.5rem;
+      font-family: var(--font-serif);
+      font-size: 5rem;
       font-weight: 400;
-      line-height: 1.1;
+      line-height: 1.05;
       margin-bottom: 2rem;
     }
 
     .tagline {
-      font-size: 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.95rem;
       line-height: 1.8;
       border-left: 2px solid var(--border);
       padding-left: 1.5rem;
       margin-bottom: 3rem;
-      max-width: 400px;
+      max-width: 420px;
     }
 
     .cta-buttons {
@@ -115,13 +133,13 @@
     }
 
     .btn {
+      font-family: var(--font-mono);
       padding: 1rem 2rem;
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.85rem;
+      font-size: 0.8rem;
       letter-spacing: 0.1em;
       text-decoration: none;
-      border: 2px solid var(--border);
-      transition: all 0.2s;
+      border: 1px solid var(--border);
+      transition: all 0.15s ease;
     }
 
     .btn-primary {
@@ -130,8 +148,7 @@
     }
 
     .btn-primary:hover {
-      background: var(--accent);
-      border-color: var(--accent);
+      background: #333;
     }
 
     .btn-secondary {
@@ -154,8 +171,8 @@
 
     .aleph-symbol {
       position: relative;
-      width: 320px;
-      height: 320px;
+      width: 340px;
+      height: 340px;
     }
 
     .aleph-symbol svg {
@@ -182,23 +199,25 @@
     }
 
     .loop-box {
+      font-family: var(--font-mono);
       background: var(--text);
       color: var(--bg);
       padding: 1rem 1.5rem;
-      font-size: 0.9rem;
+      font-size: 0.85rem;
       font-weight: 500;
       letter-spacing: 0.1em;
       margin-bottom: 1rem;
     }
 
     .loop-desc {
-      font-size: 0.85rem;
+      font-family: var(--font-serif);
+      font-size: 0.95rem;
       font-style: italic;
-      font-family: 'Playfair Display', serif;
-      max-width: 180px;
+      max-width: 160px;
     }
 
     .arrow {
+      font-family: var(--font-mono);
       font-size: 1.5rem;
       color: var(--text);
     }
@@ -209,6 +228,7 @@
     }
 
     .loop-cta a {
+      font-family: var(--font-mono);
       display: inline-flex;
       align-items: center;
       gap: 0.5rem;
@@ -217,7 +237,7 @@
       text-decoration: none;
       color: var(--text);
       font-size: 0.8rem;
-      letter-spacing: 0.1em;
+      letter-spacing: 0.08em;
     }
 
     .loop-cta a:hover {
@@ -233,6 +253,7 @@
     }
 
     .feature-badge {
+      font-family: var(--font-mono);
       display: inline-block;
       border: 1px solid var(--text-light);
       padding: 0.4rem 0.8rem;
@@ -249,15 +270,17 @@
     }
 
     .features-content h2 {
-      font-family: 'Playfair Display', serif;
-      font-size: 3rem;
+      font-family: var(--font-serif);
+      font-size: 3.5rem;
       font-weight: 400;
       margin-bottom: 1.5rem;
+      line-height: 1.1;
     }
 
     .features-content p {
-      font-size: 0.95rem;
-      line-height: 1.8;
+      font-family: var(--font-serif);
+      font-size: 1.1rem;
+      line-height: 1.7;
       margin-bottom: 2rem;
       opacity: 0.9;
     }
@@ -267,41 +290,39 @@
     }
 
     .feature-list li {
+      font-family: var(--font-mono);
       display: flex;
       align-items: flex-start;
       gap: 0.75rem;
       margin-bottom: 1rem;
-      font-size: 0.9rem;
+      font-size: 0.85rem;
     }
 
     .feature-list .icon {
-      color: var(--accent);
-      font-size: 1.1rem;
-    }
-
-    .feature-list .icon-code {
       opacity: 0.6;
     }
 
     /* Provenance card */
     .provenance-card {
-      border: 1px solid rgba(245, 243, 239, 0.2);
+      border: 1px solid rgba(245, 245, 240, 0.2);
       padding: 2rem;
     }
 
     .provenance-card h3 {
-      font-size: 0.8rem;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
       letter-spacing: 0.15em;
       margin-bottom: 1.5rem;
       opacity: 0.7;
     }
 
     .evidence-item {
+      font-family: var(--font-mono);
       display: flex;
       align-items: center;
       gap: 0.75rem;
       margin-bottom: 0.75rem;
-      font-size: 0.85rem;
+      font-size: 0.8rem;
     }
 
     .evidence-item .check {
@@ -314,13 +335,14 @@
 
     .card-divider {
       border: none;
-      border-top: 1px solid rgba(245, 243, 239, 0.2);
+      border-top: 1px solid rgba(245, 245, 240, 0.2);
       margin: 1.5rem 0;
     }
 
     .verdict {
+      font-family: var(--font-mono);
       font-size: 0.8rem;
-      letter-spacing: 0.1em;
+      letter-spacing: 0.05em;
     }
 
     .verdict strong {
@@ -335,15 +357,16 @@
     }
 
     .quote {
-      font-family: 'Playfair Display', serif;
-      font-size: 1.5rem;
+      font-family: var(--font-serif);
+      font-size: 1.6rem;
       font-style: italic;
       max-width: 700px;
       margin: 0 auto 1.5rem;
-      line-height: 1.6;
+      line-height: 1.5;
     }
 
     .quote-author {
+      font-family: var(--font-mono);
       font-size: 0.85rem;
       opacity: 0.7;
     }
@@ -359,11 +382,18 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
+      font-family: var(--font-mono);
       font-size: 0.8rem;
     }
 
     footer a {
       color: var(--text);
+    }
+
+    .shannon-labs {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
     }
 
     /* Responsive */
@@ -424,7 +454,7 @@
     <div class="logo">ALEPH</div>
     <div class="nav-links">
       <a href="https://github.com/Hmbown/aleph">[GITHUB]</a>
-      <a href="https://github.com/Hmbown/aleph#quickstart">[DOCS]</a>
+      <a href="https://github.com/Hmbown/aleph#quick-start">[DOCS]</a>
       <a href="https://pypi.org/project/aleph-rlm/">[PYPI]</a>
     </div>
   </nav>
@@ -434,33 +464,31 @@
       <div class="version-badge">V0.1.1 — RECURSIVE REASONING</div>
       <h1>The Whole<br>in Parts.</h1>
       <p class="tagline">
-        Recursive language model reasoning for documents.
-        Iterate with search, code, and think tools.
-        Converge on answers with provenance.
+        Recursive language model reasoning for documents. Iterate with search, code, and think tools. Converge on answers with provenance.
       </p>
       <div class="cta-buttons">
-        <a href="https://github.com/Hmbown/aleph#quickstart" class="btn btn-primary">GET STARTED</a>
+        <a href="https://github.com/Hmbown/aleph#quick-start" class="btn btn-primary">GET STARTED</a>
         <a href="https://github.com/Hmbown/aleph" class="btn btn-secondary">VIEW ON GITHUB</a>
       </div>
     </div>
     <div class="hero-visual">
       <div class="aleph-symbol">
-        <svg viewBox="0 0 320 320" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <svg viewBox="0 0 340 340" fill="none" xmlns="http://www.w3.org/2000/svg">
           <!-- Outer rotating squares -->
-          <rect x="40" y="40" width="240" height="240" stroke="#1a1a1a" stroke-width="1.5" fill="none" transform="rotate(0 160 160)"/>
-          <rect x="40" y="40" width="240" height="240" stroke="#1a1a1a" stroke-width="1.5" fill="none" transform="rotate(15 160 160)"/>
-          <rect x="40" y="40" width="240" height="240" stroke="#1a1a1a" stroke-width="1.5" fill="none" transform="rotate(30 160 160)"/>
-          <rect x="40" y="40" width="240" height="240" stroke="#1a1a1a" stroke-width="1.5" fill="none" transform="rotate(45 160 160)"/>
-          <!-- Inner circle with aleph-like symbol -->
-          <circle cx="160" cy="160" r="70" fill="#e8e6e1" stroke="#1a1a1a" stroke-width="1.5"/>
-          <!-- Stylized Aleph (א) -->
-          <path d="M130 190 L160 130 L190 190" stroke="#1a1a1a" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-          <line x1="145" y1="160" x2="175" y2="160" stroke="#1a1a1a" stroke-width="2"/>
+          <rect x="50" y="50" width="240" height="240" stroke="#0A0A0A" stroke-width="1" fill="none" transform="rotate(0 170 170)"/>
+          <rect x="50" y="50" width="240" height="240" stroke="#0A0A0A" stroke-width="1" fill="none" transform="rotate(12 170 170)"/>
+          <rect x="50" y="50" width="240" height="240" stroke="#0A0A0A" stroke-width="1" fill="none" transform="rotate(24 170 170)"/>
+          <rect x="50" y="50" width="240" height="240" stroke="#0A0A0A" stroke-width="1" fill="none" transform="rotate(36 170 170)"/>
+          <rect x="50" y="50" width="240" height="240" stroke="#0A0A0A" stroke-width="1" fill="none" transform="rotate(48 170 170)"/>
+          <!-- Inner circle -->
+          <circle cx="170" cy="170" r="80" fill="#E8E6E1" stroke="#0A0A0A" stroke-width="1"/>
+          <!-- Stylized Aleph (א) as A -->
+          <text x="170" y="195" text-anchor="middle" font-family="'EB Garamond', serif" font-size="72" fill="#0A0A0A">A</text>
           <!-- Dots representing infinity -->
-          <circle cx="160" cy="80" r="3" fill="#1a1a1a"/>
-          <circle cx="160" cy="240" r="3" fill="#1a1a1a"/>
-          <circle cx="80" cy="160" r="3" fill="#1a1a1a"/>
-          <circle cx="240" cy="160" r="3" fill="#1a1a1a"/>
+          <circle cx="170" cy="75" r="3" fill="#0A0A0A"/>
+          <circle cx="170" cy="265" r="3" fill="#0A0A0A"/>
+          <circle cx="75" cy="170" r="3" fill="#0A0A0A"/>
+          <circle cx="265" cy="170" r="3" fill="#0A0A0A"/>
         </svg>
       </div>
     </div>
@@ -470,7 +498,7 @@
     <div class="loop-flow">
       <div class="loop-step">
         <div class="loop-box">LOAD</div>
-        <p class="loop-desc">Context stored in REPL as variable ctx</p>
+        <p class="loop-desc">Context stored in REPL as ctx</p>
       </div>
       <span class="arrow">→</span>
       <div class="loop-step">
@@ -480,7 +508,7 @@
       <span class="arrow">→</span>
       <div class="loop-step">
         <div class="loop-box">CITE</div>
-        <p class="loop-desc">Evidence auto-accumulates with provenance</p>
+        <p class="loop-desc">Evidence accumulates with provenance</p>
       </div>
       <span class="arrow">→</span>
       <div class="loop-step">
@@ -489,7 +517,7 @@
       </div>
     </div>
     <div class="loop-cta">
-      <a href="https://github.com/Hmbown/aleph#how-it-works">↻ THE RECURSIVE LOOP</a>
+      <a href="https://github.com/Hmbown/aleph#the-solution">↻ THE RECURSIVE LOOP</a>
     </div>
   </section>
 
@@ -499,7 +527,7 @@
         <div class="feature-badge">MCP SERVER</div>
         <h2>Provenance<br>Tracking.</h2>
         <p>
-          Every search, every citation, every piece of evidence is automatically logged.
+          Every search, every citation, every piece of evidence is logged automatically.
           When you finalize, you get a complete audit trail of how you reached your answer.
         </p>
         <ul class="feature-list">
@@ -531,7 +559,7 @@
 
   <footer>
     <span>MIT License</span>
-    <span>Inspired by <a href="https://arxiv.org/abs/2502.00000" target="_blank">RLM research</a> from MIT</span>
+    <span class="shannon-labs">A <a href="https://shannonlabs.ai" target="_blank">Shannon Labs</a> project</span>
     <span><a href="https://github.com/Hmbown/aleph">GitHub</a></span>
   </footer>
 </body>
