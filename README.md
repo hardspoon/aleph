@@ -45,7 +45,7 @@ CONTEXT (stored in REPL as `ctx`)
                                            (with citations)
 ```
 
-The model sees metadata about the context, not the full text. It writes Python code to explore what it needs, when it needs it. Evidence auto-accumulates. Final answers include citations.
+The model sees metadata about the context, not the full text. It writes Python code to explore what it needs, when it needs it. Each iteration lets the model refine its search based on what it learned, rather than betting everything on one attention pass. Evidence auto-accumulates. Final answers include citations.
 
 ## Quick Start
 
@@ -107,6 +107,8 @@ print(f"Cost: ${resp.total_cost_usd:.4f}")
 print(f"Iterations: {resp.total_iterations}")
 ```
 
+If budget is exceeded, `complete()` returns with `resp.budget_status.exhausted = True` and whatever partial answer was reached. No exception is raised.
+
 ## MCP Tools
 
 | Tool | Purpose |
@@ -142,8 +144,16 @@ Available inside `exec_python`:
 | Large documents | Truncate or summarize | Load once, explore iteratively |
 | Finding specifics | Scan everything | Targeted search |
 | Verification | Trust the output | Evidence with line numbers |
-| Context limits | Hit the wall | Only fetch what's needed |
+| Context limits | Truncation required | Only fetch what's needed |
 | Audit trail | None | Full citation history |
+
+## When NOT to Use Aleph
+
+- **Short documents** that fit comfortably in context (~30k tokens or less)—single-pass is faster
+- **Simple lookups** where you know exactly what you're searching for
+- **Latency-critical applications** where iteration overhead matters
+
+Aleph shines when documents exceed context limits, when you need auditable reasoning, or when the answer requires synthesizing information from multiple locations.
 
 ## Provenance Tracking
 
@@ -219,7 +229,7 @@ aleph-mcp-local --timeout 30 --max-output 10000
 
 ## Research
 
-Inspired by work on Recursive Language Models by Alex Zhang and Omar Khattab at MIT.
+Inspired by [Recursive Language Models](https://alexzhang13.github.io/blog/2025/rlm/) by Alex Zhang (MIT CSAIL). The core insight: rather than solving context limits at the architecture level, let models partition context and make recursive calls to themselves, maintaining smaller individual context windows throughout.
 
 ## License
 
