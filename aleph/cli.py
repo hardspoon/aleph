@@ -223,11 +223,47 @@ ALEPH_MCP_CONFIG = {
 # Detection and installation logic
 # =============================================================================
 
+def _find_claude_cli() -> str | None:
+    """Find the Claude Code CLI executable.
+
+    On Windows with NPM installation, the executable may be claude.cmd or claude.ps1.
+    Returns the executable name if found, None otherwise.
+    """
+    # Try standard 'claude' first (works on macOS/Linux and some Windows setups)
+    if shutil.which("claude"):
+        return "claude"
+
+    # On Windows, NPM creates .cmd and .ps1 wrapper scripts
+    if platform.system() == "Windows":
+        for ext in (".cmd", ".ps1", ".exe"):
+            exe_name = f"claude{ext}"
+            if shutil.which(exe_name):
+                return exe_name
+
+        # Also check common npm global bin locations on Windows
+        npm_paths = []
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            npm_paths.append(Path(appdata) / "npm" / "claude.cmd")
+            npm_paths.append(Path(appdata) / "npm" / "claude.ps1")
+
+        localappdata = os.environ.get("LOCALAPPDATA")
+        if localappdata:
+            npm_paths.append(Path(localappdata) / "npm" / "claude.cmd")
+            npm_paths.append(Path(localappdata) / "npm" / "claude.ps1")
+
+        for npm_path in npm_paths:
+            if npm_path.exists():
+                return str(npm_path)
+
+    return None
+
+
 def is_client_installed(client: ClientConfig) -> bool:
     """Check if a client appears to be installed."""
     if client.is_cli:
         # Check if claude CLI is available
-        return shutil.which("claude") is not None
+        return _find_claude_cli() is not None
 
     path = client.get_path()
     if path is None:
@@ -253,12 +289,16 @@ def is_aleph_configured(client: ClientConfig) -> bool:
     """Check if Aleph is already configured in a client."""
     if client.is_cli:
         # Check claude mcp list
+        claude_exe = _find_claude_cli()
+        if not claude_exe:
+            return False
         try:
             result = subprocess.run(
-                ["claude", "mcp", "list"],
+                [claude_exe, "mcp", "list"],
                 capture_output=True,
                 text=True,
                 timeout=10,
+                shell=claude_exe.endswith((".cmd", ".ps1")),  # Use shell for Windows scripts
             )
             return "aleph" in result.stdout.lower()
         except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
@@ -375,20 +415,24 @@ def install_to_config_file(
 
 def install_to_claude_code(dry_run: bool = False) -> bool:
     """Install Aleph to Claude Code using CLI."""
-    if not shutil.which("claude"):
+    claude_exe = _find_claude_cli()
+    if not claude_exe:
         print_error("Claude Code CLI not found. Install it first: https://claude.ai/code")
+        if platform.system() == "Windows":
+            print_info("If installed via NPM, ensure %APPDATA%\\npm is in your PATH")
         return False
 
     if dry_run:
-        print_info("[DRY RUN] Would run: claude mcp add aleph aleph-mcp-local")
+        print_info(f"[DRY RUN] Would run: {claude_exe} mcp add aleph aleph-mcp-local")
         return True
 
     try:
         result = subprocess.run(
-            ["claude", "mcp", "add", "aleph", "aleph-mcp-local"],
+            [claude_exe, "mcp", "add", "aleph", "aleph-mcp-local"],
             capture_output=True,
             text=True,
             timeout=30,
+            shell=claude_exe.endswith((".cmd", ".ps1")),  # Use shell for Windows scripts
         )
 
         if result.returncode == 0:
@@ -464,20 +508,22 @@ def uninstall_from_config_file(
 
 def uninstall_from_claude_code(dry_run: bool = False) -> bool:
     """Remove Aleph from Claude Code using CLI."""
-    if not shutil.which("claude"):
+    claude_exe = _find_claude_cli()
+    if not claude_exe:
         print_error("Claude Code CLI not found")
         return False
 
     if dry_run:
-        print_info("[DRY RUN] Would run: claude mcp remove aleph")
+        print_info(f"[DRY RUN] Would run: {claude_exe} mcp remove aleph")
         return True
 
     try:
         result = subprocess.run(
-            ["claude", "mcp", "remove", "aleph"],
+            [claude_exe, "mcp", "remove", "aleph"],
             capture_output=True,
             text=True,
             timeout=30,
+            shell=claude_exe.endswith((".cmd", ".ps1")),  # Use shell for Windows scripts
         )
 
         if result.returncode == 0:
@@ -548,12 +594,13 @@ def doctor() -> bool:
 
     for name, client in CLIENTS.items():
         if client.is_cli:
-            if shutil.which("claude"):
+            claude_exe = _find_claude_cli()
+            if claude_exe:
                 if is_aleph_configured(client):
                     status = "Configured"
                 else:
                     status = "Not configured"
-                path_str = "(CLI)"
+                path_str = f"(CLI: {claude_exe})"
             else:
                 status = "Not installed"
                 path_str = "-"
