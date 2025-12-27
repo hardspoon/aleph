@@ -13,7 +13,7 @@
 
 ```bash
 pip install aleph-rlm[mcp]
-aleph-rlm install        # auto-detects Claude Desktop, Cursor, Windsurf, VS Code
+aleph-rlm install        # auto-detects Claude Desktop, Cursor, Windsurf, VS Code, Codex CLI
 aleph-rlm doctor         # verify installation
 ```
 
@@ -30,6 +30,29 @@ Add to your MCP client config:
   }
 }
 ```
+</details>
+
+<details>
+<summary>Codex CLI configuration</summary>
+
+Add to `~/.codex/config.toml`:
+```toml
+[mcp_servers.aleph]
+command = "aleph-mcp-local"
+args = []
+```
+
+Or run:
+```bash
+aleph-rlm install codex
+```
+</details>
+
+<details>
+<summary>ChatGPT / OpenAI clients</summary>
+
+If your OpenAI client supports MCP servers (for example, ChatGPT desktop), add a server named `aleph`
+that runs `aleph-mcp-local` with no args. See `docs/openai.md` for a concise checklist.
 </details>
 
 ## How It Works
@@ -188,7 +211,7 @@ aleph-rlm uninstall <client>   # Remove from client
 aleph-rlm doctor               # Verify installation
 ```
 
-Supported clients: `claude-desktop`, `cursor`, `windsurf`, `vscode`, `claude-code`
+Supported clients: `claude-desktop`, `cursor`, `windsurf`, `vscode`, `claude-code`, `codex`
 
 </details>
 
@@ -209,10 +232,16 @@ The sandbox is best-effort, not hardened.
 git clone https://github.com/Hmbown/aleph.git
 cd aleph
 pip install -e '.[dev,mcp]'
-pytest  # 190 tests
+pytest  # 230 tests
 ```
 
 ## Recent Changes
+
+### v0.5.0 (December 2025)
+
+- **Alephfiles / recipes** (`aleph.recipe.v1`) with token-efficiency metrics and evidence bundles (export + signing)
+- **Remote MCP orchestration**: register remote stdio servers, list tools, call tools, and record calls into recipe trace/evidence
+- **230 tests passing** (`pytest -q`)
 
 ### v0.2.0 (December 2025)
 

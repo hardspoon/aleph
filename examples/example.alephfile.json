@@ -1,0 +1,27 @@
+{
+  "schema": "aleph.recipe.v1",
+  "query": "Find all error handling patterns in this code and identify potential issues",
+  "datasets": [
+    {
+      "id": "main",
+      "source": "inline",
+      "format": "code",
+      "content": "def fetch_user(user_id):\n    try:\n        response = api.get(f'/users/{user_id}')\n        return response.json()\n    except Exception as e:\n        # TODO: Better error handling\n        print(f'Error: {e}')\n        return None\n\ndef process_payment(amount, card):\n    if amount <= 0:\n        raise ValueError('Amount must be positive')\n    try:\n        result = payment_api.charge(card, amount)\n        if not result.success:\n            raise PaymentError(result.message)\n        return result\n    except PaymentError:\n        raise\n    except Exception as e:\n        log.error(f'Payment failed: {e}')\n        raise PaymentError('Payment processing failed')\n"
+    }
+  ],
+  "tools_allowed": null,
+  "model": "default",
+  "max_iterations": 20,
+  "max_tokens": null,
+  "timeout_seconds": 120.0,
+  "require_evidence": true,
+  "require_citations": true,
+  "privacy_filter": [
+    "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b",
+    "\\b\\d{4}[- ]?\\d{4}[- ]?\\d{4}[- ]?\\d{4}\\b"
+  ],
+  "metadata": {
+    "author": "example",
+    "purpose": "Demonstrate Alephfile format"
+  }
+}

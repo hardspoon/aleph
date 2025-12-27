@@ -6,6 +6,7 @@ Provides easy installation of Aleph into various MCP clients:
 - Windsurf
 - Claude Code
 - VSCode
+- Codex CLI
 
 Usage:
     aleph install           # Interactive mode, detects all clients
@@ -13,6 +14,7 @@ Usage:
     aleph install cursor
     aleph install windsurf
     aleph install claude-code
+    aleph install codex
     aleph install --all     # Configure all detected clients
     aleph uninstall <client>
     aleph doctor            # Verify installation
@@ -23,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -124,6 +127,7 @@ class ClientConfig:
     config_path: Callable[[], Path | None]
     is_cli: bool = False  # True for Claude Code which uses CLI commands
     restart_instruction: str = ""
+    config_format: str = "json"
 
     def get_path(self) -> Path | None:
         """Get the config path, returns None if not applicable."""
@@ -171,6 +175,11 @@ def _get_claude_code_path() -> Path | None:
     return None
 
 
+def _get_codex_path() -> Path | None:
+    """Get Codex CLI config path."""
+    return Path.home() / ".codex" / "config.toml"
+
+
 # Define all supported clients
 CLIENTS: dict[str, ClientConfig] = {
     "claude-desktop": ClientConfig(
@@ -209,6 +218,13 @@ CLIENTS: dict[str, ClientConfig] = {
         config_path=_get_claude_code_path,
         is_cli=True,
         restart_instruction="Run 'claude' to use Aleph",
+    ),
+    "codex": ClientConfig(
+        name="codex",
+        display_name="Codex CLI",
+        config_path=_get_codex_path,
+        restart_instruction="Restart Codex CLI to load Aleph",
+        config_format="toml",
     ),
 }
 
@@ -281,6 +297,9 @@ def is_client_installed(client: ClientConfig) -> bool:
     if client.name == "windsurf":
         return path.parent.exists()
 
+    if client.name == "codex":
+        return path.parent.exists()
+
     # For project-level configs, always return True (user may want to create)
     return True
 
@@ -303,6 +322,9 @@ def is_aleph_configured(client: ClientConfig) -> bool:
             return "aleph" in result.stdout.lower()
         except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
             return False
+
+    if client.config_format == "toml":
+        return is_aleph_configured_toml(client)
 
     path = client.get_path()
     if path is None or not path.exists():
@@ -332,6 +354,22 @@ def backup_config(path: Path) -> Path | None:
         return None
 
 
+def backup_config_toml(path: Path) -> Path | None:
+    """Create a backup of a TOML config file."""
+    if not path.exists():
+        return None
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = path.with_suffix(f"{path.suffix}.backup_{timestamp}")
+
+    try:
+        shutil.copy2(path, backup_path)
+        return backup_path
+    except OSError as e:
+        print_warning(f"Could not create backup: {e}")
+        return None
+
+
 def validate_json(path: Path) -> bool:
     """Validate that a JSON file is well-formed."""
     try:
@@ -340,6 +378,161 @@ def validate_json(path: Path) -> bool:
         return True
     except (json.JSONDecodeError, OSError):
         return False
+
+
+def validate_toml(path: Path) -> bool:
+    """Validate that a TOML file is well-formed when tomllib/tomli is available."""
+    try:
+        import tomllib  # type: ignore[attr-defined]
+    except ImportError:
+        try:
+            import tomli as tomllib  # type: ignore[no-redef]
+        except ImportError:
+            return True
+    try:
+        with open(path, "rb") as f:
+            tomllib.load(f)
+        return True
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+
+
+def _toml_section_exists(config_text: str, section: str) -> bool:
+    pattern = rf"^\[{re.escape(section)}\]\s*$"
+    return re.search(pattern, config_text, flags=re.MULTILINE) is not None
+
+
+def _remove_toml_section(config_text: str, section: str) -> str:
+    pattern = rf"(?ms)^\[{re.escape(section)}\]\n(?:.*\n)*?(?=^\[|\Z)"
+    return re.sub(pattern, "", config_text)
+
+
+def is_aleph_configured_toml(client: ClientConfig) -> bool:
+    """Check if Aleph is configured in a TOML config file (Codex)."""
+    path = client.get_path()
+    if path is None or not path.exists():
+        return False
+    try:
+        config_text = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return _toml_section_exists(config_text, "mcp_servers.aleph")
+
+
+def install_to_toml_config(
+    client: ClientConfig,
+    dry_run: bool = False,
+) -> bool:
+    """Install Aleph to a TOML config file (Codex)."""
+    path = client.get_path()
+    if path is None:
+        print_error(f"Could not determine config path for {client.display_name}")
+        return False
+
+    if path.exists():
+        try:
+            config_text = path.read_text(encoding="utf-8")
+        except OSError as e:
+            print_error(f"Could not read {path}: {e}")
+            return False
+    else:
+        config_text = ""
+
+    if _toml_section_exists(config_text, "mcp_servers.aleph"):
+        print_warning(f"Aleph is already configured in {client.display_name}")
+        return True
+
+    block = (
+        "[mcp_servers.aleph]\n"
+        "command = \"aleph-mcp-local\"\n"
+        "args = []\n"
+    )
+
+    if dry_run:
+        print_info(f"[DRY RUN] Would write to: {path}")
+        print_info(f"[DRY RUN] Would append:\n{block}")
+        return True
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    if path.exists():
+        backup = backup_config_toml(path)
+        if backup:
+            print_info(f"Backed up existing config to: {backup}")
+
+    new_text = config_text
+    if new_text and not new_text.endswith("\n"):
+        new_text += "\n"
+    if new_text and not new_text.endswith("\n\n"):
+        new_text += "\n"
+    new_text += block
+
+    try:
+        path.write_text(new_text, encoding="utf-8")
+    except OSError as e:
+        print_error(f"Could not write to {path}: {e}")
+        return False
+
+    if not validate_toml(path):
+        print_error(f"Written TOML may be invalid! Check {path}")
+        return False
+
+    print_success(f"Configured Aleph in {client.display_name}")
+    print_info(f"Config file: {path}")
+    if client.restart_instruction:
+        print_info(client.restart_instruction)
+
+    return True
+
+
+def uninstall_from_toml_config(
+    client: ClientConfig,
+    dry_run: bool = False,
+) -> bool:
+    """Remove Aleph from a TOML config file (Codex)."""
+    path = client.get_path()
+    if path is None:
+        print_error(f"Could not determine config path for {client.display_name}")
+        return False
+
+    if not path.exists():
+        print_warning(f"Config file does not exist: {path}")
+        return True
+
+    try:
+        config_text = path.read_text(encoding="utf-8")
+    except OSError as e:
+        print_error(f"Could not read {path}: {e}")
+        return False
+
+    has_main = _toml_section_exists(config_text, "mcp_servers.aleph")
+    has_env = _toml_section_exists(config_text, "mcp_servers.aleph.env")
+    if not has_main and not has_env:
+        print_warning(f"Aleph is not configured in {client.display_name}")
+        return True
+
+    if dry_run:
+        print_info(f"[DRY RUN] Would remove Aleph from: {path}")
+        return True
+
+    backup = backup_config_toml(path)
+    if backup:
+        print_info(f"Backed up existing config to: {backup}")
+
+    new_text = _remove_toml_section(config_text, "mcp_servers.aleph.env")
+    new_text = _remove_toml_section(new_text, "mcp_servers.aleph")
+    new_text = re.sub(r"\n{3,}", "\n\n", new_text).rstrip()
+    if new_text:
+        new_text += "\n"
+
+    try:
+        path.write_text(new_text, encoding="utf-8")
+    except OSError as e:
+        print_error(f"Could not write to {path}: {e}")
+        return False
+
+    print_success(f"Removed Aleph from {client.display_name}")
+    return True
 
 
 def install_to_config_file(
@@ -547,16 +740,18 @@ def install_client(client: ClientConfig, dry_run: bool = False) -> bool:
     """Install Aleph to a specific client."""
     if client.is_cli:
         return install_to_claude_code(dry_run)
-    else:
-        return install_to_config_file(client, dry_run)
+    if client.config_format == "toml":
+        return install_to_toml_config(client, dry_run)
+    return install_to_config_file(client, dry_run)
 
 
 def uninstall_client(client: ClientConfig, dry_run: bool = False) -> bool:
     """Uninstall Aleph from a specific client."""
     if client.is_cli:
         return uninstall_from_claude_code(dry_run)
-    else:
-        return uninstall_from_config_file(client, dry_run)
+    if client.config_format == "toml":
+        return uninstall_from_toml_config(client, dry_run)
+    return uninstall_from_config_file(client, dry_run)
 
 
 # =============================================================================
@@ -665,7 +860,7 @@ def interactive_install(dry_run: bool = False) -> None:
 
     if not detected:
         print_warning("No MCP clients detected!")
-        print_info("Supported clients: Claude Desktop, Cursor, Windsurf, VSCode, Claude Code")
+        print_info("Supported clients: Claude Desktop, Cursor, Windsurf, VSCode, Claude Code, Codex CLI")
         return
 
     print_info(f"Detected {len(detected)} MCP client(s):\n")
@@ -744,6 +939,7 @@ Clients:
     windsurf           Windsurf editor
     vscode             VSCode (project config)
     claude-code        Claude Code CLI
+    codex              Codex CLI
 
 Options:
     --dry-run          Preview changes without writing
@@ -752,6 +948,7 @@ Options:
 Examples:
     aleph install                     # Interactive mode
     aleph install claude-desktop      # Configure Claude Desktop
+    aleph install codex               # Configure Codex CLI
     aleph install --all --dry-run     # Preview all installations
     aleph uninstall cursor            # Remove from Cursor
     aleph doctor                      # Check installation status
