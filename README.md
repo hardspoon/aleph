@@ -3,45 +3,94 @@
 > *"What my eyes beheld was simultaneous, but what I shall now write down will be successive, because language is successive."*
 > — Jorge Luis Borges, ["The Aleph"](https://web.mit.edu/allanmc/www/borgesaleph.pdf) (1945)
 
-**MCP server for iterative document analysis.** Aleph stores context externally and lets the AI explore it with search, code execution, and recursive sub-queries—avoiding the limitations of context stuffing.
+**Aleph is an MCP server that implements the Recursive Language Model (RLM) paradigm** ([arXiv:2512.24601](https://arxiv.org/abs/2512.24601)).
+
+The idea is simple to state and easy to miss in practice:
+
+- Long-context failures are often *attention failures* (“lost in the middle”), not just window-size limits.
+- Instead of packing more tokens into a prompt, treat the “context” as **external state**.
+- Give the model tools to **search, compute, and recurse** over that state.
+
+Aleph is that tool surface: it stores context in a sandboxed Python REPL as `ctx`, exposes navigation/search/compute tools over MCP, and (when needed) lets the model spawn sub-agents and aggregate their results.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PyPI version](https://img.shields.io/pypi/v/aleph-rlm.svg)](https://pypi.org/project/aleph-rlm/)
 
-## What Aleph Does
+---
 
-Instead of pasting an entire document into a prompt, Aleph:
+## The paradigm (RLM), not “bigger prompts”
 
-1. **Stores context externally** as a variable (`ctx`) in a sandboxed Python environment
-2. **Provides tools** for the AI to search, slice, and compute over the context
-3. **Enables recursive sub-queries** to break large documents into chunks and analyze them independently
-4. **Tracks citations** so conclusions link back to specific text ranges
+Most LLM integrations still look like this:
 
-This follows the [Recursive Language Model](https://arxiv.org/abs/2512.24601) (RLM) paradigm, which treats prompts as environment variables rather than context window contents.
+1. Collect all the relevant stuff.
+2. Paste it into the prompt.
+3. Hope the model attends to the right parts.
 
-## When to Use Aleph
+RLM flips the default:
 
-| Good fit | Not the right tool |
-|----------|-------------------|
-| Documents >10 pages or >30k tokens | Short texts that fit easily in context |
-| Need precise citations with line numbers | Simple Q&A without citation requirements |
-| Analysis requiring regex/code execution | Latency-critical applications |
-| Iterative exploration across turns | Single-shot queries |
-| Multi-document comparison | Tasks where context stuffing works fine |
+1. Store the relevant stuff **outside** the model (files, docs, logs, code, query results).
+2. Let the model **explore** it programmatically (search/peek/compute).
+3. Keep a trail of **evidence** so outputs can be traced back to source text.
+4. When the problem is too large, **recurse**: spawn sub-agents for parts, then aggregate.
 
-## Quick Start
+Borges’ Aleph is a useful mental model: a point that contains all points. You don’t *hold* the whole thing in attention at once; you move through it—zooming, searching, and returning with what matters.
+
+---
+
+## What Aleph is
+
+Aleph is:
+
+- **An MCP server** (works with Claude Desktop, Cursor, Windsurf, VS Code, Codex CLI, etc.).
+- **An execution environment**: a sandboxed Python REPL where your context lives as `ctx`.
+- **A navigation + compute surface** over that context (`search_context`, `peek_context`, `exec_python`, …).
+- **A recursion primitive** (`sub_query`) for decomposing work and aggregating results.
+
+Aleph is *not* tied to “document analysis” as a domain. The context you load can be anything you can represent as text/JSON:
+
+- a repo snapshot (or selected files)
+- build/test output
+- incident logs
+- database exports
+- API responses
+- evaluation datasets
+
+---
+
+## What this enables (practical outcomes)
+
+### 1) Contexts far larger than the window
+You can work against multi-megabyte inputs because the model is pulling *slices* on demand, not ingesting everything at once.
+
+### 2) Grounded answers with citations
+Aleph tracks evidence items (from search/peek/exec/sub-queries). You can require that every claim be supported by a source range.
+
+### 3) Recursive decomposition (self-similar work)
+When a task is too big to do in one pass, you chunk the context, run sub-agents on each chunk, and synthesize.
+
+### 4) More than “read this PDF”
+Because exploration is tool-driven, you can treat *any queryable surface* as context: code, logs, structured data, or the output of other tools.
+
+---
+
+## Quick start
 
 ```bash
 pip install aleph-rlm[mcp]
-aleph-rlm install        # auto-detects Claude Desktop, Cursor, Windsurf, VS Code, Codex CLI
-aleph-rlm doctor         # verify installation
+
+# Auto-configure popular MCP clients
+aleph-rlm install
+
+# Verify installation
+aleph-rlm doctor
 ```
 
 <details>
 <summary>Manual MCP configuration</summary>
 
 Add to your MCP client config (Claude Desktop, Cursor, etc.):
+
 ```json
 {
   "mcpServers": {
@@ -57,6 +106,7 @@ Add to your MCP client config (Claude Desktop, Cursor, etc.):
 <summary>Codex CLI configuration</summary>
 
 Add to `~/.codex/config.toml`:
+
 ```toml
 [mcp_servers.aleph]
 command = "aleph-mcp-local"
@@ -66,204 +116,126 @@ args = []
 Or run: `aleph-rlm install codex`
 </details>
 
-## For AI Assistants
+---
 
-If you're an AI using Aleph, see **[ALEPH.md](ALEPH.md)** for the skill guide. The key idea:
+## The basic loop (how you actually use it)
 
-> **Don't stuff the document into your context window.** Load it into Aleph, search for what you need, cite what you find, and finalize with a grounded answer.
+The habit Aleph is trying to enforce:
 
-The skill guide covers the full process: `load_context` → `search_context` → `cite()` → `finalize`.
+1. **Load** the context
+2. **Search / peek** small slices
+3. **Compute** where useful (regex, parsing, diffs, stats)
+4. **Cite** what you rely on
+5. **Finalize**
 
-## How It Works
+In an MCP client, that typically looks like:
 
-```
-Document (any size)
-        │
-        ▼
-┌──────────────────────────────────────┐
-│  load_context(document)              │
-│  → stores as `ctx` variable          │
-│  → AI sees metadata only             │
-└──────────────────────────────────────┘
-        │
-        ▼
-┌──────────────────────────────────────┐
-│  Tools for exploration:              │
-│  • search_context(regex)             │
-│  • peek_context(start, end)          │
-│  • exec_python(code)                 │
-│  • sub_query(prompt, chunk)          │
-└──────────────────────────────────────┘
-        │
-        ▼
-┌──────────────────────────────────────┐
-│  Evidence accumulates automatically  │
-│  → cite() tracks provenance          │
-│  → finalize() returns answer + cites │
-└──────────────────────────────────────┘
+1) Load context
+
+```text
+load_context(context="<big text or JSON>", context_id="doc")
 ```
 
-The AI never receives the full document in its context window. Instead, it iteratively explores with tools—similar to how a human would search and read through a long document.
+2) Search and inspect
 
-## Example Session
-
-```
-User: Load this contract and find all liability exclusions
-
-AI: [calls load_context with document]
-    [calls search_context with "liabil|indemn|exclud"]
-    [calls peek_context on matched sections]
-    [calls finalize with structured answer]
-
-AI: Found 3 liability exclusions:
-    1. Section 4.2: Consequential damages excluded (lines 142-158)
-    2. Section 7.1: Force majeure carve-out (lines 289-301)
-    3. Section 9.3: Cap at contract value (lines 445-452)
-
-    Evidence: [4 citations with line ranges]
+```text
+search_context(pattern="liabil|indemn|exclud", context_id="doc")
+peek_context(start=120, end=170, unit="lines", context_id="doc")
 ```
 
-## Recursive Sub-Queries
-
-For documents too large to analyze in one pass, Aleph supports RLM-style decomposition:
+3) Compute and cite (inside the sandbox)
 
 ```python
-# Inside exec_python tool
-chunks = chunk(100000)  # Split context into 100k char chunks
-summaries = []
-
-for c in chunks:
-    result = sub_query("Extract key findings:", context_slice=c)
-    summaries.append(result)
-
-# Aggregate
-final = sub_query(f"Synthesize these {len(summaries)} summaries:")
+# exec_python
+hits = search(r"indemnif|hold harmless")
+for h in hits[:5]:
+    cite(snippet=h["line"], line_range=(h["line_no"], h["line_no"]), note="candidate clause")
 ```
 
-The `sub_query` tool spawns an independent sub-agent for each chunk. Backend priority:
+4) Finalize with an answer that can be audited
 
-1. **API** (if `MIMO_API_KEY` or `OPENAI_API_KEY` set) — most reliable
-2. **claude CLI** (if installed) — uses existing subscription
-3. **codex CLI** (if installed) — uses existing subscription
-4. **aider CLI** (if installed)
-
-Configure via environment:
-```bash
-# Use Mimo Flash V2 (free until Jan 20, 2026)
-export MIMO_API_KEY=your_key
-export OPENAI_BASE_URL=https://api.xiaomimimo.com/v1
-
-# Or use OpenAI
-export OPENAI_API_KEY=your_key
-export OPENAI_BASE_URL=https://api.openai.com/v1
-export ALEPH_SUB_QUERY_MODEL=gpt-4o-mini
-
-# Or force a specific CLI backend
-export ALEPH_SUB_QUERY_BACKEND=claude
+```text
+finalize(answer="…", confidence="high", context_id="doc")
 ```
 
-## MCP Tools Reference
+If you’re an AI assistant using Aleph, see **[ALEPH.md](ALEPH.md)** for the usage discipline.
 
-| Tool | Purpose |
-|------|---------|
-| `load_context` | Load document into sandboxed REPL as `ctx` |
-| `peek_context` | View character or line ranges |
-| `search_context` | Regex search with surrounding context |
-| `exec_python` | Run Python code against context |
-| `sub_query` | Spawn sub-agent for chunk analysis |
-| `chunk_context` | Split into navigable chunks with metadata |
-| `think` | Structure reasoning sub-steps |
-| `evaluate_progress` | Check confidence and convergence |
-| `get_evidence` | Retrieve citation trail |
-| `finalize` | Complete with answer and citations |
+---
 
-## REPL Helpers
+## Recursion: when one pass isn’t enough
 
-80+ functions available inside `exec_python`:
+The “recursive” part of RLM is not a slogan; it’s an execution strategy.
 
-**Navigation:** `peek`, `lines`, `search`, `chunk`
+When a problem is too large to handle as a single trajectory:
 
-**Extraction:** `extract_emails`, `extract_urls`, `extract_money`, `extract_dates`, `extract_ips`, `extract_functions`, `extract_todos`...
+1. split the context into chunks
+2. run `sub_query` on each chunk (sub-agents)
+3. synthesize the results (often via another `sub_query`)
 
-**Text operations:** `grep`, `head`, `tail`, `sort_lines`, `uniq`, `word_frequency`, `ngrams`...
+Sketch:
 
-**Validation:** `is_email`, `is_url`, `is_json`, `is_ip`...
+```python
+# exec_python
+chunks = chunk(100_000)  # chars
+results = [sub_query("Extract obligations and exceptions.", context_slice=c) for c in chunks]
+final = sub_query("Synthesize these findings into a single, cited answer:", context_slice="\n\n".join(results))
+```
 
-**Citation:** `cite(snippet, line_range, note)` — tracks evidence for provenance
+`sub_query` can use an API backend or spawn a local CLI (Claude/Codex/Aider), depending on what’s installed/configured.
 
-<details>
-<summary>Full helper list</summary>
+---
 
-**Extraction (16):** `extract_numbers`, `extract_money`, `extract_percentages`, `extract_dates`, `extract_times`, `extract_timestamps`, `extract_emails`, `extract_urls`, `extract_ips`, `extract_phones`, `extract_paths`, `extract_env_vars`, `extract_versions`, `extract_uuids`, `extract_hashes`, `extract_hex`
+## MCP tools (high-level)
 
-**Code analysis (6):** `extract_functions`, `extract_classes`, `extract_imports`, `extract_comments`, `extract_strings`, `extract_todos`
+Core exploration:
 
-**Log analysis (3):** `extract_log_levels`, `extract_exceptions`, `extract_json_objects`
+- `load_context` — store text/JSON as `ctx` in a sandboxed REPL
+- `search_context` — regex search with surrounding context
+- `peek_context` — view specific character/line ranges
+- `exec_python` / `get_variable` — compute over the context
+- `chunk_context` — produce navigable chunk boundaries + metadata
 
-**Statistics (8):** `word_count`, `char_count`, `line_count`, `sentence_count`, `paragraph_count`, `unique_words`, `word_frequency`, `ngrams`
+RLM control surface:
 
-**Line operations (12):** `head`, `tail`, `grep`, `grep_v`, `grep_c`, `uniq`, `sort_lines`, `number_lines`, `strip_lines`, `blank_lines`, `non_blank_lines`, `columns`
+- `think`, `summarize_so_far`, `evaluate_progress` — manage long trajectories
+- `get_evidence` — retrieve collected evidence
+- `finalize` — complete with answer (plus evidence)
 
-**Text manipulation (15):** `replace_all`, `split_by`, `between`, `before`, `after`, `truncate`, `wrap_text`, `indent_text`, `dedent_text`, `normalize_whitespace`, `remove_punctuation`, `to_lower`, `to_upper`, `to_title`
+Recursion:
 
-**Pattern matching (6):** `contains`, `contains_any`, `contains_all`, `count_matches`, `find_all`, `first_match`
+- `sub_query` — spawn a sub-agent on a slice of context
 
-**Comparison (4):** `diff`, `similarity`, `common_lines`, `diff_lines`
+Optional “actions” (disabled by default; require starting with `--enable-actions`):
 
-**Collections (11):** `dedupe`, `flatten`, `first`, `last`, `take`, `drop`, `partition`, `group_by`, `frequency`, `sample_items`, `shuffle_items`
+- `read_file`, `write_file`, `run_command`, `run_tests`, `save_session`, `load_session`
 
-**Validation (7):** `is_numeric`, `is_email`, `is_url`, `is_ip`, `is_uuid`, `is_json`, `is_blank`
-
-**Conversion (11):** `to_json`, `from_json`, `to_csv_row`, `from_csv_row`, `to_int`, `to_float`, `to_snake_case`, `to_camel_case`, `to_pascal_case`, `to_kebab_case`, `slugify`
-</details>
+---
 
 ## Configuration
 
-### Environment Variables
-
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `ALEPH_SUB_QUERY_BACKEND` | Force backend: `api`, `claude`, `codex`, `aider` | auto |
-| `ALEPH_SUB_QUERY_MODEL` | Model for API backend | `mimo-v2-flash` |
-| `MIMO_API_KEY` | Mimo API key | — |
-| `OPENAI_API_KEY` | OpenAI-compatible API key | — |
-| `OPENAI_BASE_URL` | API endpoint | `https://api.xiaomimimo.com/v1` |
-| `ALEPH_MAX_ITERATIONS` | Iteration limit | 100 |
-
-### CLI Commands
+Common environment variables:
 
 ```bash
-aleph-rlm install              # Interactive installer
-aleph-rlm install <client>     # Install to specific client
-aleph-rlm uninstall <client>   # Remove from client
-aleph-rlm doctor               # Verify installation
+# Sub-query backend selection (auto picks based on what’s available)
+export ALEPH_SUB_QUERY_BACKEND=auto   # or: api | claude | codex | aider
+
+# API backend credentials (OpenAI-compatible)
+export OPENAI_API_KEY=...
+export OPENAI_BASE_URL=https://api.openai.com/v1
+export ALEPH_SUB_QUERY_MODEL=gpt-4o-mini
 ```
 
-Supported clients: `claude-desktop`, `cursor`, `windsurf`, `vscode`, `claude-code`, `codex`
+See **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)** for the full list.
 
-## Security
+---
 
-The Python sandbox is **best-effort, not hardened**:
+## Security notes
 
-- **Blocked:** `open`, `os`, `subprocess`, `socket`, `eval`, `exec`, dunder access
-- **Allowed imports:** `re`, `json`, `csv`, `math`, `statistics`, `collections`, `itertools`, `functools`, `datetime`, `textwrap`, `difflib`, `random`, `string`, `hashlib`, `base64`
+- The Python sandbox is **best-effort, not hardened**.
+- “Action tools” (file/command access) are **off by default** and are workspace-scoped when enabled.
+- For untrusted inputs, run Aleph in a container with resource limits.
 
-For production with untrusted input, run Aleph in a container with resource limits.
-
-## Research Background
-
-Aleph implements ideas from the [Recursive Language Model](https://arxiv.org/abs/2512.24601) paper (Zhang & Khattab, 2024):
-
-1. **Context as environment variable:** Instead of stuffing documents into prompts, treat them as external state the model can query
-2. **Iterative exploration:** Models search, read, and compute incrementally rather than processing everything at once
-3. **Recursive decomposition:** Large tasks break into sub-problems, each handled by independent sub-agents
-4. **Task-agnostic:** The approach works for any document analysis task without task-specific prompting
-
-Key findings from the paper:
-- LLMs struggle with long contexts even within their window ("lost in the middle")
-- Treating prompts as environment variables enables 10M+ token handling
-- Cost is comparable to baseline when accounting for reduced errors
-- Recursive sub-calls let the model decompose and aggregate effectively
+---
 
 ## Development
 
@@ -271,32 +243,12 @@ Key findings from the paper:
 git clone https://github.com/Hmbown/aleph.git
 cd aleph
 pip install -e '.[dev,mcp]'
-pytest  # 230 tests
+pytest
 ```
 
-## Documentation
+Architecture notes: **[DEVELOPMENT.md](DEVELOPMENT.md)**
 
-| Document | Purpose |
-|----------|---------|
-| [ALEPH.md](ALEPH.md) | **AI skill guide** — how to use Aleph properly |
-| [DEVELOPMENT.md](DEVELOPMENT.md) | Architecture and development |
-| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | All configuration options |
-
-## Changelog
-
-### v0.5.0 (December 2025)
-- Alephfiles/recipes with token-efficiency metrics and evidence bundles
-- Remote MCP orchestration for multi-server workflows
-- 230 tests passing
-
-### v0.2.0 (December 2025)
-- 80+ REPL helpers for document analysis
-- Extraction, statistics, grep-like operations, validation, conversion
-
-### v0.1.0 (December 2025)
-- Initial release with core RLM loop
-- MCP server implementation
-- Sub-query support
+---
 
 ## License
 
