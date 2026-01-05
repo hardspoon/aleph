@@ -130,6 +130,19 @@ The habit Aleph is trying to enforce:
 
 In an MCP client, that typically looks like:
 
+### A sample user prompt
+
+If your client supports it, you can frame requests like this to encourage the full Aleph workflow (load → search/peek → compute → cite → finalize):
+
+```text
+/aleph: Load the attached contract, find all liability exclusions, and respond with:
+- a bullet list of exclusions
+- line-range citations for each exclusion
+- a short note if anything is ambiguous or missing
+
+Use search/peek and cite everything you rely on; don’t paste the whole document.
+```
+
 1) Load context
 
 ```text
