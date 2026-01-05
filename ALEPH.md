@@ -1,119 +1,158 @@
-# Aleph Skill: RLM-Style Document Analysis
+# /aleph — Document Analysis Skill
 
-When analyzing large documents, use this recursive reasoning approach instead of trying to process everything at once.
+**Purpose:** Analyze documents without stuffing them into your context window.
 
-## When to Use Aleph
+## The Core Idea
 
-- Document is too large to fit comfortably in context
-- Need precise citations/evidence for claims
-- Multi-step analysis requiring iteration
-- Aggregating information across sections
+When you receive a large document, don't paste it into your response context. Instead:
 
-## Core Pattern
+1. **Load** it into Aleph's external memory
+2. **Search** for what you need
+3. **Cite** what you find
+4. **Finalize** with a grounded answer
+
+You never see the full document. You explore it piece by piece, like a human would.
+
+## When to Use This
+
+| Use Aleph | Don't Use Aleph |
+|-----------|-----------------|
+| Document >30k tokens | Short text that fits in context |
+| Need citations with line numbers | Quick answer without evidence |
+| Must find specific information | General knowledge question |
+| Analyzing sections across a long doc | Speed matters more than precision |
+
+## The Process
 
 ```
-1. Load context → 2. Chunk if needed → 3. Search/peek relevant parts → 4. sub_query for deep analysis → 5. Aggregate → 6. Finalize with citations
+load_context → search/peek → cite evidence → finalize
 ```
 
-## Tools Available
+### 1. Load the Document
 
-| Tool | Use For |
-|------|---------|
-| `load_context` | Load the document into session |
-| `peek_context` | View specific line/char ranges |
-| `search_context` | Find patterns with regex |
-| `exec_python` | Run code on context (80+ helpers available) |
-| `sub_query` | Spawn sub-agent for chunk analysis (RLM) |
-| `chunk_context` | Split into navigable chunks |
-| `think` | Structure reasoning steps |
-| `get_evidence` | Review collected citations |
-| `finalize` | Complete with answer + evidence |
+```
+load_context(content="<document text>", context_id="doc1")
+```
 
-## RLM Pattern with sub_query
+You receive metadata (size, preview) but NOT the full content. This protects your context window.
 
-For documents too large to analyze at once:
+### 2. Search for What You Need
+
+```
+search_context(pattern="liability|damages", context_id="doc1")
+```
+
+Returns matching lines with surrounding context. Use regex patterns.
+
+### 3. View Specific Sections
+
+```
+peek_context(start=100, end=150, unit="lines", context_id="doc1")
+```
+
+Returns just lines 100-150. Only pull what you need.
+
+### 4. Cite Evidence
+
+Inside `exec_python`:
 
 ```python
-# In exec_python:
-chunks = chunk(100000)  # 100k char chunks
-summaries = []
+cite(
+    snippet="Contractor shall not be liable for consequential damages",
+    line_range=(142, 145),
+    note="Liability exclusion"
+)
+```
+
+### 5. Finalize
+
+```
+finalize(
+    answer="Found 3 liability exclusions...",
+    confidence="high",
+    context_id="doc1"
+)
+```
+
+Returns your answer with all evidence attached.
+
+## For Very Large Documents
+
+If the document is huge (>100k chars), use `sub_query` to analyze chunks independently:
+
+```python
+# Inside exec_python
+chunks = chunk(100000)  # Split into 100k char chunks
 
 for i, c in enumerate(chunks):
     result = sub_query(
-        prompt=f"Analyze chunk {i+1}/{len(chunks)}: What are the key findings?",
+        prompt="What liability risks are in this section?",
         context_slice=c
     )
-    summaries.append(result)
-
-# Aggregate
-final = sub_query(
-    prompt="Synthesize these chunk summaries into a comprehensive answer:",
-    context_slice="\n---\n".join(summaries)
-)
-print(final)
+    print(f"Chunk {i+1}: {result}")
 ```
 
-## Example Workflow
+Each `sub_query` spawns an independent sub-agent. You aggregate the results.
 
-**User**: "Analyze this 500-page legal document for liability risks"
+## Tools Reference
 
-**AI Response**:
-
-1. `load_context(document)` - Load the full document
-2. `chunk_context(chunk_size=50000)` - Map into ~10 chunks
-3. For each chunk, `sub_query("Identify liability risks in this section", context_slice=chunk)`
-4. `exec_python` to aggregate findings
-5. `search_context("indemnif|liabil|waiv")` - Find specific clauses
-6. `finalize` with structured answer + evidence citations
-
-## Key Principles
-
-1. **Don't stuff context** - Use peek/search to access what you need
-2. **Cite everything** - Use `cite()` helper to track evidence
-3. **Decompose** - Break complex questions into sub-queries
-4. **Iterate** - Use `evaluate_progress` to check if you have enough info
-5. **Aggregate** - Combine chunk results into coherent answer
-
-## sub_query Backends
-
-The `sub_query` tool auto-detects the best backend:
-
-1. **claude CLI** - Uses your Claude subscription (no extra API key)
-2. **codex CLI** - Uses your OpenAI subscription
-3. **aider CLI** - If installed
-4. **Mimo API** - Free fallback (set `MIMO_API_KEY`)
-
-In IDE environments (Windsurf, Cursor, Claude Code), CLI backends work automatically.
-In Claude Desktop, you need the Mimo API key configured.
+| Tool | What It Does |
+|------|--------------|
+| `load_context` | Store document externally |
+| `search_context` | Find patterns (regex) |
+| `peek_context` | View specific lines/chars |
+| `exec_python` | Run code on the document |
+| `sub_query` | Analyze chunks independently |
+| `chunk_context` | Get chunk boundaries |
+| `get_evidence` | See all citations |
+| `finalize` | Complete with answer + evidence |
 
 ## Helpers in exec_python
 
-The REPL has 80+ helpers. Key ones:
+You have access to:
 
-```python
-# Text navigation
-peek(0, 1000)           # First 1000 chars
-lines(0, 50)            # First 50 lines
-search(r"pattern")      # Regex search
+- `ctx` — the document
+- `peek(start, end)` — view chars
+- `lines(start, end)` — view lines
+- `search(pattern)` — regex search
+- `chunk(size)` — split into chunks
+- `cite(snippet, line_range, note)` — track evidence
+- `sub_query(prompt, context_slice)` — spawn sub-agent
 
-# Extraction
-extract_numbers(ctx)    # All numbers
-extract_dates(ctx)      # All dates
-extract_emails(ctx)     # All emails
+Plus 80+ extractors: `extract_emails()`, `extract_dates()`, `word_frequency()`, etc.
 
-# Analysis
-word_frequency(ctx)     # Word counts
-ngrams(ctx, 3)          # N-grams
-diff(text1, text2)      # Compare texts
+## Example
 
-# Citation
-cite("snippet", line_range=(10, 15), note="Key finding")
+**User:** "Find the indemnification clauses in this contract"
+
+**You do:**
+
+1. `load_context(content=contract, context_id="contract")`
+2. `search_context(pattern="indemnif|hold harmless", context_id="contract")`
+3. `peek_context` on the matching line ranges
+4. `exec_python` with `cite()` for each clause
+5. `finalize` with list of clauses + line numbers
+
+**You don't:**
+
+- Paste the whole contract in your response
+- Guess without searching
+- Skip citations
+- Try to hold it all in memory
+
+## Configuration
+
+`sub_query` backend priority (when `backend="auto"`):
+
+1. **API** — if `MIMO_API_KEY` or `OPENAI_API_KEY` set
+2. **claude CLI** — if installed
+3. **codex CLI** — if installed
+4. **aider CLI** — if installed
+
+Override with environment variables:
+
+```bash
+export ALEPH_SUB_QUERY_BACKEND=api   # Force API
+export MIMO_API_KEY=your_key         # API credentials
+export ALEPH_SUB_QUERY_MODEL=gpt-4o  # Custom model
 ```
-
-## Don't Do This
-
-❌ Load entire document into a single prompt
-❌ Guess at content without searching
-❌ Skip citations
-❌ Process sequentially when chunks are independent
-❌ Ignore sub_query for complex analysis

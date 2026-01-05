@@ -36,27 +36,87 @@ class TestSubQueryConfig:
 
 
 class TestDetectBackend:
-    """Tests for backend detection."""
+    """Tests for backend detection.
 
-    def test_detect_backend_claude(self):
-        with patch("shutil.which") as mock_which:
-            mock_which.side_effect = lambda x: "/usr/bin/claude" if x == "claude" else None
-            assert detect_backend() == "claude"
+    Priority order (API-first):
+    1. ALEPH_SUB_QUERY_BACKEND env var (explicit override)
+    2. API (if credentials available)
+    3. claude CLI (if installed)
+    4. codex CLI (if installed)
+    5. aider CLI (if installed)
+    6. API fallback (will error with helpful message)
+    """
 
-    def test_detect_backend_codex(self):
-        with patch("shutil.which") as mock_which:
-            mock_which.side_effect = lambda x: "/usr/bin/codex" if x == "codex" else None
-            assert detect_backend() == "codex"
+    def test_detect_backend_api_preferred_when_credentials_available(self):
+        """API should be preferred when credentials are set, even if CLI is available."""
+        with patch.dict(os.environ, {"MIMO_API_KEY": "test-key"}):
+            with patch("aleph.sub_query.shutil.which") as mock_which:
+                mock_which.side_effect = lambda x: "/usr/bin/claude" if x == "claude" else None
+                assert detect_backend() == "api"
 
-    def test_detect_backend_aider(self):
-        with patch("shutil.which") as mock_which:
-            mock_which.side_effect = lambda x: "/usr/bin/aider" if x == "aider" else None
-            assert detect_backend() == "aider"
+    def test_detect_backend_openai_key_also_works(self):
+        """OPENAI_API_KEY should also trigger API preference."""
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False):
+            # Clear MIMO_API_KEY if set
+            env = dict(os.environ)
+            env.pop("MIMO_API_KEY", None)
+            env["OPENAI_API_KEY"] = "test-key"
+            with patch.dict(os.environ, env, clear=True):
+                with patch("aleph.sub_query.shutil.which") as mock_which:
+                    mock_which.side_effect = lambda x: "/usr/bin/claude" if x == "claude" else None
+                    assert detect_backend() == "api"
+
+    def test_detect_backend_explicit_override(self):
+        """ALEPH_SUB_QUERY_BACKEND should override all other detection."""
+        with patch.dict(os.environ, {"ALEPH_SUB_QUERY_BACKEND": "codex", "MIMO_API_KEY": "key"}):
+            with patch("aleph.sub_query.shutil.which") as mock_which:
+                mock_which.return_value = "/usr/bin/something"
+                assert detect_backend() == "codex"
+
+    def test_detect_backend_explicit_override_api(self):
+        """ALEPH_SUB_QUERY_BACKEND=api should force API even without credentials."""
+        with patch.dict(os.environ, {"ALEPH_SUB_QUERY_BACKEND": "api"}, clear=False):
+            env = dict(os.environ)
+            env.pop("MIMO_API_KEY", None)
+            env.pop("OPENAI_API_KEY", None)
+            env["ALEPH_SUB_QUERY_BACKEND"] = "api"
+            with patch.dict(os.environ, env, clear=True):
+                assert detect_backend() == "api"
+
+    def test_detect_backend_claude_when_no_api_credentials(self):
+        """Claude CLI should be used when no API credentials are available."""
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("aleph.sub_query.shutil.which") as mock_which:
+                mock_which.side_effect = lambda x: "/usr/bin/claude" if x == "claude" else None
+                assert detect_backend() == "claude"
+
+    def test_detect_backend_codex_when_no_api_credentials(self):
+        """Codex CLI should be used when no API credentials and no Claude."""
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("aleph.sub_query.shutil.which") as mock_which:
+                mock_which.side_effect = lambda x: "/usr/bin/codex" if x == "codex" else None
+                assert detect_backend() == "codex"
+
+    def test_detect_backend_aider_when_no_api_credentials(self):
+        """Aider CLI should be used when no API credentials and no Claude/Codex."""
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("aleph.sub_query.shutil.which") as mock_which:
+                mock_which.side_effect = lambda x: "/usr/bin/aider" if x == "aider" else None
+                assert detect_backend() == "aider"
 
     def test_detect_backend_api_fallback(self):
-        with patch("shutil.which") as mock_which:
-            mock_which.return_value = None
-            assert detect_backend() == "api"
+        """API fallback when nothing else available (will error with helpful message)."""
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("aleph.sub_query.shutil.which") as mock_which:
+                mock_which.return_value = None
+                assert detect_backend() == "api"
+
+    def test_detect_backend_model_override_implies_api(self):
+        """ALEPH_SUB_QUERY_MODEL should prefer API when credentials available."""
+        with patch.dict(os.environ, {"ALEPH_SUB_QUERY_MODEL": "gpt-4o", "OPENAI_API_KEY": "key"}):
+            with patch("aleph.sub_query.shutil.which") as mock_which:
+                mock_which.side_effect = lambda x: "/usr/bin/claude" if x == "claude" else None
+                assert detect_backend() == "api"
 
 
 class TestHasApiCredentials:

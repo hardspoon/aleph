@@ -3,6 +3,11 @@
 Uses OpenAI-compatible API format.
 Default: Xiaomi MiMo Flash V2 (free public beta until Jan 20, 2026)
 API docs: https://xiaomimimo.com
+
+Configuration via environment variables:
+- MIMO_API_KEY or OPENAI_API_KEY: API key (required)
+- OPENAI_BASE_URL: API endpoint (default: https://api.xiaomimimo.com/v1)
+- ALEPH_SUB_QUERY_MODEL: Model name (default: mimo-v2-flash)
 """
 
 from __future__ import annotations
@@ -27,25 +32,33 @@ async def run_api_sub_query(
     max_tokens: int = 8192,
 ) -> tuple[bool, str]:
     """Run sub-query via OpenAI-compatible API.
-    
+
     Default: Xiaomi MiMo Flash V2 (free public beta until Jan 20, 2026)
-    
+
+    Configuration via environment:
+    - MIMO_API_KEY or OPENAI_API_KEY: API key
+    - OPENAI_BASE_URL: API endpoint
+    - ALEPH_SUB_QUERY_MODEL: Override model name
+
     Args:
         prompt: The question/task for the sub-agent.
         context_slice: Optional context to include.
-        model: Model name.
-        api_key_env: Environment variable for API key (MIMO_API_KEY or OPENAI_API_KEY).
+        model: Model name (can be overridden by ALEPH_SUB_QUERY_MODEL).
+        api_key_env: Environment variable for API key.
         api_base_url_env: Environment variable for base URL.
         timeout: Request timeout in seconds.
         system_prompt: Optional system prompt.
         max_tokens: Maximum tokens in response.
-    
+
     Returns:
         Tuple of (success, output).
     """
     # Try MIMO_API_KEY first, fall back to OPENAI_API_KEY
     api_key = os.environ.get(api_key_env) or os.environ.get("OPENAI_API_KEY")
     base_url = os.environ.get(api_base_url_env, DEFAULT_MIMO_BASE_URL)
+
+    # Allow model override via environment
+    model = os.environ.get("ALEPH_SUB_QUERY_MODEL", model)
     
     if not api_key:
         return False, (

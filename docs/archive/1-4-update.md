@@ -1,4 +1,7 @@
-# Aleph RLM Enhancement Plan
+# [ARCHIVED] Aleph RLM Enhancement Plan
+
+> **Note:** This document is historical. The features described here have been implemented in v0.5.0. See the main [README.md](../../README.md) for current documentation.
+
 > January 4, 2026
 
 ## Goal

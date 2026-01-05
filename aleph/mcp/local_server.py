@@ -1485,10 +1485,16 @@ class AlephMCPServerLocal:
             and returns its response.
 
             Backend priority (when backend="auto"):
-            1. claude CLI - uses your existing Claude subscription (no extra cost)
-            2. codex CLI - uses your existing OpenAI subscription
-            3. aider CLI
-            4. API fallback - Mimo Flash V2 (free until Jan 20, 2026)
+            1. API - if MIMO_API_KEY or OPENAI_API_KEY is set (most reliable)
+            2. claude CLI - if installed
+            3. codex CLI - if installed
+            4. aider CLI - if installed
+
+            Configure via environment:
+            - ALEPH_SUB_QUERY_BACKEND: Force specific backend ("api", "claude", "codex", "aider")
+            - MIMO_API_KEY or OPENAI_API_KEY: API credentials
+            - OPENAI_BASE_URL: API endpoint (default: Mimo Flash V2)
+            - ALEPH_SUB_QUERY_MODEL: Model name (default: mimo-v2-flash)
 
             Args:
                 prompt: The question/task for the sub-agent
@@ -1520,7 +1526,7 @@ class AlephMCPServerLocal:
             # Resolve backend
             resolved_backend = backend
             if backend == "auto":
-                resolved_backend = detect_backend()
+                resolved_backend = detect_backend(self.sub_query_config)
 
             # Try CLI first, fall back to API
             if resolved_backend in CLI_BACKENDS:
