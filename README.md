@@ -55,7 +55,7 @@ The content you load can be anything representable as text or JSON: code reposit
 ```bash
 pip install aleph-rlm[mcp]
 
-# Auto-configure popular MCP clients
+# Auto-configure popular MCP clients with aleph-mcp-local
 aleph-rlm install
 
 # Verify installation
@@ -77,6 +77,8 @@ Add to your MCP client config (Claude Desktop, Cursor, etc.):
   }
 }
 ```
+
+> **Note:** `aleph-mcp-local` is the recommended default. See [MCP Server Options](#mcp-server-options) for details.
 </details>
 
 <details>
@@ -121,6 +123,34 @@ mkdir -p ~/.codex/skills/aleph
 cp /path/to/aleph/ALEPH.md ~/.codex/skills/aleph/SKILL.md
 ```
 </details>
+
+---
+
+## MCP Server Options
+
+Aleph provides two MCP servers with different capabilities:
+
+| Feature | `aleph-mcp-local` (Recommended) | `aleph-mcp` (Advanced) |
+|----------|-------------------------------|---------------------------|
+| **Purpose** | Full-featured RLM server with action tools | Lightweight, stateless server |
+| **Context Management** | In-memory session with evidence tracking | Stateless session dictionary |
+| **Action Tools** | `load_file`, `write_file`, `run_command`, etc. (with `--enable-actions`) | Not available |
+| **Sub-Query Backend** | Auto-detects CLI or API backends | Not available |
+| **Evidence Tracking** | Full provenance with line ranges and citations | Basic tracking |
+| **Best For** | Daily use, file operations, complex workflows | Custom integrations, minimal setup |
+
+**Use `aleph-mcp-local` (recommended):**
+- Most users and use cases
+- Need file system access (`load_file`, `write_file`)
+- Want automatic sub-query backend detection
+- Need evidence tracking and session management
+
+**Use `aleph-mcp` (advanced only):**
+- Custom integration requiring stateless operation
+- Lightweight deployment without dependencies
+- Don't need action tools or sub-query
+
+> **Documentation Note:** This README focuses on `aleph-mcp-local`. For advanced use of `aleph-mcp`, see the source code and [docs/MCP_SETUP.md](docs/MCP_SETUP.md).
 
 ---
 
@@ -191,38 +221,50 @@ final = sub_query("Synthesize into a summary:", context_slice="\n\n".join(result
 ## Available tools
 
 **Core exploration:**
-| Tool | Purpose |
-|------|---------|
-| `load_context` | Store text/JSON in external memory |
-| `search_context` | Regex search with surrounding context |
-| `peek_context` | View specific line or character ranges |
-| `exec_python` | Run Python code over the content |
-| `chunk_context` | Split content into navigable chunks |
+|| Tool | Purpose |
+||------|---------|
+|| `load_context` | Store text/JSON in external memory |
+|| `load_file` | Load a workspace file into a context |
+|| `search_context` | Regex search with surrounding context |
+|| `peek_context` | View specific line or character ranges |
+|| `exec_python` | Run Python code over the content |
+|| `chunk_context` | Split content into navigable chunks |
 
 **Workflow management:**
-| Tool | Purpose |
-|------|---------|
-| `think` | Structure reasoning for complex problems |
-| `get_evidence` | Retrieve collected citations |
-| `summarize_so_far` | Summarize progress on long tasks |
-| `finalize` | Complete with answer and evidence |
+|| Tool | Purpose |
+||------|---------|
+|| `think` | Structure reasoning for complex problems |
+|| `get_status` | Show current session state |
+|| `get_evidence` | Retrieve collected citations |
+|| `evaluate_progress` | Self-evaluate progress with convergence tracking |
+|| `summarize_so_far` | Summarize progress on long tasks |
+|| `finalize` | Complete with answer and evidence |
 
 **Recursion:**
-| Tool | Purpose |
-|------|---------|
-| `sub_query` | Spawn a sub-agent on a content slice |
+|| Tool | Purpose |
+||------|---------|
+|| `sub_query` | Spawn a sub-agent on a content slice |
 
-**Optional actions** (disabled by default, enable with `--enable-actions`):
-| Tool | Purpose |
-|------|---------|
-| `load_file` | Load a workspace file into a context |
-| `read_file`, `write_file` | File system access |
-| `run_command`, `run_tests` | Shell execution |
-| `save_session`, `load_session` | Persist/restore state |
+**Session management:**
+|| Tool | Purpose |
+||------|---------|
+|| `load_session` | Load a saved session from file |
+|| `save_session` | Persist current session to file |
 
-Action tools that return JSON support `output="object"` for structured responses without double-encoding.
+**Action tools** (disabled by default, enable with `--enable-actions`):
+|| Tool | Purpose |
+||------|---------|
+|| `read_file`, `write_file` | File system access (workspace-scoped) |
+|| `run_command` | Shell execution |
+|| `run_tests` | Execute test commands |
+|| `add_remote_server` | Register remote MCP servers |
+|| `call_remote_tool` | Call tools on remote MCP servers |
+|| `close_remote_server` | Close remote MCP server connections |
 
----
+> **Note:** Action tools require `--enable-actions` flag and respect `--workspace-root` parameter. JSON responses support `output="object"` for structured output without double-encoding---
+
+
+## Configuration---
 
 ## Configuration
 
