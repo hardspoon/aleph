@@ -109,6 +109,9 @@ aleph-mcp-local --enable-actions --require-confirmation
 
 # Custom workspace root
 aleph-mcp-local --enable-actions --workspace-root /path/to/project
+
+# Allow any git repo (use absolute paths in tool calls)
+aleph-mcp-local --enable-actions --workspace-mode git
 ```
 
 ### MCP Client Configuration

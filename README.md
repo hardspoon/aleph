@@ -184,6 +184,14 @@ export OPENAI_BASE_URL=https://api.xiaomimimo.com/v1  # Default endpoint
 
 For a full list of options, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
+## Changelog
+
+### Unreleased
+
+- Added `--workspace-mode` for action tools (`fixed`, `git`, `any`) to support multi-repo workflows.
+- Added optional `cwd` for `run_tests` to run tests outside the server’s default working directory.
+- Updated MCP setup docs with multi-repo configuration examples.
+
 ## Development
 
 ```bash

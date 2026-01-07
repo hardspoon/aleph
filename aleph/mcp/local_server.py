@@ -65,6 +65,8 @@ __all__ = ["AlephMCPServerLocal", "main"]
 
 LineNumberBase = Literal[0, 1]
 DEFAULT_LINE_NUMBER_BASE: LineNumberBase = 1
+WorkspaceMode = Literal["fixed", "git", "any"]
+DEFAULT_WORKSPACE_MODE: WorkspaceMode = "fixed"
 
 
 @dataclass
@@ -129,13 +131,42 @@ def _detect_workspace_root() -> Path:
     return cwd
 
 
-def _scoped_path(workspace_root: Path, path: str) -> Path:
+def _nearest_existing_parent(path: Path) -> Path:
+    for parent in [path, *path.parents]:
+        if parent.exists():
+            return parent
+    return path
+
+
+def _find_git_root(path: Path) -> Path | None:
+    start = _nearest_existing_parent(path)
+    if start.is_file():
+        start = start.parent
+    for parent in [start, *start.parents]:
+        if (parent / ".git").exists():
+            return parent
+    return None
+
+
+def _scoped_path(workspace_root: Path, path: str, mode: WorkspaceMode) -> Path:
     root = workspace_root.resolve()
     p = Path(path)
     if p.is_absolute():
         resolved = p.resolve()
     else:
         resolved = (root / p).resolve()
+
+    if mode == "any":
+        return resolved
+
+    if mode == "git":
+        git_root = _find_git_root(resolved)
+        if git_root is None:
+            raise ValueError(f"Path '{path}' is not inside a git repository (workspace mode: git)")
+        if not resolved.is_relative_to(git_root):
+            raise ValueError(f"Path '{path}' escapes git root '{git_root}'")
+        return resolved
+
     if not resolved.is_relative_to(root):
         raise ValueError(f"Path '{path}' escapes workspace root '{root}'")
     return resolved
@@ -207,6 +238,7 @@ def _to_jsonable(obj: Any) -> Any:
 class ActionConfig:
     enabled: bool = False
     workspace_root: Path = field(default_factory=_detect_workspace_root)
+    workspace_mode: WorkspaceMode = DEFAULT_WORKSPACE_MODE
     require_confirmation: bool = False
     max_cmd_seconds: float = 30.0
     max_output_chars: int = 50_000
@@ -546,7 +578,11 @@ class AlephMCPServerLocal:
             session.iterations += 1
 
             workspace_root = self.action_config.workspace_root
-            cwd_path = _scoped_path(workspace_root, cwd) if cwd else workspace_root
+            cwd_path = (
+                _scoped_path(workspace_root, cwd, self.action_config.workspace_mode)
+                if cwd
+                else workspace_root
+            )
             timeout = timeout_seconds if timeout_seconds is not None else self.action_config.max_cmd_seconds
 
             if shell:
@@ -597,7 +633,11 @@ class AlephMCPServerLocal:
                 return _format_error(f"start_line must be >= {base}", output=output)
 
             try:
-                p = _scoped_path(self.action_config.workspace_root, path)
+                p = _scoped_path(
+                    self.action_config.workspace_root,
+                    path,
+                    self.action_config.workspace_mode,
+                )
             except Exception as e:
                 return _format_error(str(e), output=output)
 
@@ -667,7 +707,11 @@ class AlephMCPServerLocal:
                 return f"Error: {e}"
 
             try:
-                p = _scoped_path(self.action_config.workspace_root, path)
+                p = _scoped_path(
+                    self.action_config.workspace_root,
+                    path,
+                    self.action_config.workspace_mode,
+                )
             except Exception as e:
                 return f"Error: {e}"
 
@@ -702,7 +746,11 @@ class AlephMCPServerLocal:
             session.iterations += 1
 
             try:
-                p = _scoped_path(self.action_config.workspace_root, path)
+                p = _scoped_path(
+                    self.action_config.workspace_root,
+                    path,
+                    self.action_config.workspace_mode,
+                )
             except Exception as e:
                 return _format_error(str(e), output=output)
 
@@ -732,6 +780,7 @@ class AlephMCPServerLocal:
         async def run_tests(
             runner: Literal["auto", "pytest"] = "auto",
             args: list[str] | None = None,
+            cwd: str | None = None,
             confirm: bool = False,
             output: Literal["json", "markdown", "object"] = "json",
             context_id: str = "default",
@@ -751,9 +800,20 @@ class AlephMCPServerLocal:
             if args:
                 argv.extend(args)
 
+            cwd_path = self.action_config.workspace_root
+            if cwd:
+                try:
+                    cwd_path = _scoped_path(
+                        self.action_config.workspace_root,
+                        cwd,
+                        self.action_config.workspace_mode,
+                    )
+                except Exception as e:
+                    return _format_error(str(e), output=output)
+
             proc_payload = await _run_subprocess(
                 argv=argv,
-                cwd=self.action_config.workspace_root,
+                cwd=cwd_path,
                 timeout_seconds=self.action_config.max_cmd_seconds,
             )
             raw_output = (proc_payload.get("stdout") or "") + ("\n" + proc_payload.get("stderr") if proc_payload.get("stderr") else "")
@@ -977,7 +1037,11 @@ class AlephMCPServerLocal:
                 )
 
             try:
-                p = _scoped_path(self.action_config.workspace_root, path)
+                p = _scoped_path(
+                    self.action_config.workspace_root,
+                    path,
+                    self.action_config.workspace_mode,
+                )
             except Exception as e:
                 return _format_error(str(e), output=output)
 
@@ -1001,7 +1065,11 @@ class AlephMCPServerLocal:
                 return _format_error(err, output=output)
 
             try:
-                p = _scoped_path(self.action_config.workspace_root, path)
+                p = _scoped_path(
+                    self.action_config.workspace_root,
+                    path,
+                    self.action_config.workspace_mode,
+                )
             except Exception as e:
                 return _format_error(str(e), output=output)
 
@@ -2335,7 +2403,11 @@ class AlephMCPServerLocal:
                 return _format_error(err, output=output)
 
             try:
-                p = _scoped_path(self.action_config.workspace_root, path)
+                p = _scoped_path(
+                    self.action_config.workspace_root,
+                    path,
+                    self.action_config.workspace_mode,
+                )
             except Exception as e:
                 return _format_error(str(e), output=output)
 
@@ -2602,7 +2674,11 @@ class AlephMCPServerLocal:
             result = self._recipe_results[recipe_id]
 
             try:
-                p = _scoped_path(self.action_config.workspace_root, path)
+                p = _scoped_path(
+                    self.action_config.workspace_root,
+                    path,
+                    self.action_config.workspace_mode,
+                )
             except Exception as e:
                 return _format_error(str(e), output=output)
 
@@ -2766,6 +2842,13 @@ def main() -> None:
         help="Workspace root for action tools (default: auto-detect git root or cwd)",
     )
     parser.add_argument(
+        "--workspace-mode",
+        type=str,
+        choices=["fixed", "git", "any"],
+        default=DEFAULT_WORKSPACE_MODE,
+        help="Path scope for action tools: fixed (workspace root only), git (any git repo), any (no path restriction)",
+    )
+    parser.add_argument(
         "--require-confirmation",
         action="store_true",
         help="Require confirm=true for action tools",
@@ -2781,6 +2864,7 @@ def main() -> None:
     action_cfg = ActionConfig(
         enabled=bool(args.enable_actions),
         workspace_root=Path(args.workspace_root).resolve() if args.workspace_root else _detect_workspace_root(),
+        workspace_mode=cast(WorkspaceMode, args.workspace_mode),
         require_confirmation=bool(args.require_confirmation),
     )
 

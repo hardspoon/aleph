@@ -124,6 +124,7 @@ This enables aleph commands in Codex.
 All MCP servers support these parameters:
 
 - `--workspace-root <path>` - The root directory for file operations (read_file, write_file, run_command, etc.)
+- `--workspace-mode <fixed|git|any>` - Path scope for actions: `fixed` (workspace root only), `git` (any git repo), `any` (no path restriction)
 - `--enable-actions` - Enable action tools (read_file, write_file, run_command, run_tests, etc.)
 - `--require-confirmation` - Require `confirm=true` on all action tool calls
 - `--timeout <seconds>` - Sandbox execution timeout (default: 30)
@@ -144,6 +145,7 @@ The workspace root should be the directory containing:
 3. Use that directory as the workspace root
 
 **Recommended:** Always set `--workspace-root` explicitly to avoid ambiguity.
+If you need to work across multiple repos in one MCP server, prefer `--workspace-mode git` and use absolute paths (or a broad workspace root).
 
 ## Example Scenarios
 
@@ -232,6 +234,26 @@ Default limits:
 - Max file read: 1,000,000 bytes (1MB)
 - Max file write: 1,000,000 bytes (1MB)
 
+### Scenario 5: Any Git Repo
+
+Allow action tools to operate in any git repo on the machine:
+
+```json
+{
+  "mcpServers": {
+    "aleph": {
+      "command": "aleph-mcp-local",
+      "args": [
+        "--enable-actions",
+        "--workspace-mode",
+        "git"
+      ]
+    }
+  }
+}
+```
+Use absolute paths in tool calls (or set `--workspace-root` to a broad parent) when working across repos.
+
 ## Security Considerations
 
 ### Actions Mode
@@ -241,6 +263,7 @@ When you enable `--enable-actions`, you grant aleph permission to:
 - **Write files** - Create/modify files in workspace (up to 1MB by default)
 - **Run commands** - Execute shell commands (30s timeout by default)
 - **Run tests** - Execute test commands
+Use `--workspace-mode git` to limit access to git repos, or `--workspace-mode any` to remove path restrictions.
 
 ### Confirmation Mode
 
@@ -291,6 +314,7 @@ Default limits:
 **Cause:** Workspace root not set or incorrect.
 
 **Solution:** Add `--workspace-root` to MCP configuration with the correct path.
+If you intentionally want multi-repo access, use `--workspace-mode git` or `--workspace-mode any`.
 
 **Examples:**
 
