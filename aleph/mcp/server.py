@@ -137,9 +137,11 @@ class AlephMCPServer:
             repl.inject_sub_query(_sub_query)
 
             self._sessions[context_id] = _Session(repl=repl, meta=meta, line_number_base=base)
+            line_desc = "1-based" if base == 1 else "0-based"
             return (
-                f"Loaded context '{context_id}': {meta.size_chars:,} chars, {meta.size_lines:,} lines, "
-                f"~{meta.size_tokens_estimate:,} tokens (line numbers { '1-based' if base == 1 else '0-based' })"
+                f"Context loaded '{context_id}': {meta.size_chars:,} chars, "
+                f"{meta.size_lines:,} lines, ~{meta.size_tokens_estimate:,} tokens "
+                f"(line numbers {line_desc})."
             )
 
         @self.server.tool()

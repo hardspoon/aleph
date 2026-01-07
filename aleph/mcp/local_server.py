@@ -390,40 +390,11 @@ class AlephMCPServerLocal:
             line_number_base: LineNumberBase,
         ) -> str:
             line_desc = "1-based" if line_number_base == 1 else "0-based"
-            return f"""## Context Loaded Successfully
-
-**Context ID:** `{context_id}`
-**Format:** {meta.format.value}
-**Size:** {meta.size_chars:,} characters, {meta.size_lines:,} lines
-**Estimated tokens:** ~{meta.size_tokens_estimate:,}
-**Line numbers:** {line_desc}
-
-**Preview (first 500 chars):**
-```
-{meta.sample_preview}
-```
-
-### Available Tools
-- `peek_context`: View specific character or line ranges
-- `search_context`: Search for patterns with regex
-- `exec_python`: Execute Python code (context is in variable `ctx`)
-- `get_variable`: Retrieve variables from the REPL
-- `list_contexts`: List loaded contexts/sessions
-- `diff_contexts`: Unified diff between two loaded contexts
-- `save_session`: Save a session to disk (action tool)
-- `load_session`: Load a session from disk (action tool)
-- `load_file`: Load a workspace file into a context (action tool)
-- `read_file`: Read a file from the workspace (action tool)
-- `write_file`: Write a file in the workspace (action tool)
-- `run_command`: Run a command in the workspace (action tool)
-- `run_tests`: Run pytest tests and return structured failures (action tool)
-- `think`: Structure your reasoning for complex sub-problems
-- `get_status`: Check current session state
-- `get_evidence`: Retrieve collected evidence/citations
-- `chunk_context`: Split context into chunks with metadata
-- `evaluate_progress`: Self-evaluate progress and convergence
-- `summarize_so_far`: Summarize session progress
-- `finalize`: Provide your final answer"""
+            return (
+                f"Context loaded '{context_id}': {meta.size_chars:,} chars, "
+                f"{meta.size_lines:,} lines, ~{meta.size_tokens_estimate:,} tokens "
+                f"(line numbers {line_desc})."
+            )
 
         def _create_session(
             context: str,
