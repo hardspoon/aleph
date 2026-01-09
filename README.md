@@ -8,11 +8,32 @@ Aleph is an MCP (Model Context Protocol) server that enables AI assistants to an
 
 ## Key Capabilities
 
-- **External Memory**: Store massive documents outside model's context window.
+- **Unlimited Context**: Load files as large as your system RAM allows—gigabytes of data accessible via simple queries. The LLM never sees the raw file; it queries a Python process that holds the data in memory.
 - **Navigation Tools**: High-performance regex search and line-based navigation.
 - **Compute Sandbox**: Execute Python code over loaded content for parsing and analysis.
 - **Evidence Tracking**: Automatic citation of source text for grounded answers.
 - **Recursive Reasoning**: Spawn sub-agents to process document chunks in parallel.
+
+### How "Unlimited Context" Works
+
+Traditional LLMs are limited by their context window (~200K tokens). Aleph sidesteps this entirely:
+
+```
+┌─────────────────┐     queries      ┌─────────────────────────┐
+│   LLM Context   │ ───────────────► │   Python Process (RAM)  │
+│   (~200K tokens)│ ◄─────────────── │   (8GB, 32GB, 64GB...)  │
+│                 │   small results  │   └── your_file.txt     │
+└─────────────────┘                  └─────────────────────────┘
+```
+
+- **Python loads the entire file into RAM** as a string
+- **The LLM queries it** via `search()`, `peek()`, `lines()`, etc.
+- **Only query results** (kilobytes) enter the LLM's context—never the full file
+- **Your RAM is the limit**, not the model's context window (with a default 1GB safety cap)
+
+A 50MB log file? The LLM sees ~1KB of search results. A 2GB database dump? Same—just the slices you ask for.
+
+By default, Aleph sets a **1GB max file size** to avoid accidental overload, but you can raise it with `--max-file-size` based on your machine.
 
 ## Installation
 
@@ -209,6 +230,7 @@ For full configuration options (limits, budgets, and backend details), see [docs
 
 ### Unreleased
 
+- **Unlimited context architecture**: Clarified that file size is limited only by system RAM, not LLM context window. Load gigabytes of data and query it with search/peek/lines.
 - Added `--workspace-mode` for action tools (`fixed`, `git`, `any`) to support multi-repo workflows.
 - Added optional `cwd` for `run_tests` to run tests outside the server’s default working directory.
 - Updated MCP setup docs with multi-repo configuration examples.

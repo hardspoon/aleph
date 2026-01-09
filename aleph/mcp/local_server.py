@@ -238,8 +238,8 @@ class ActionConfig:
     require_confirmation: bool = False
     max_cmd_seconds: float = 30.0
     max_output_chars: int = 50_000
-    max_read_bytes: int = 1_000_000
-    max_write_bytes: int = 1_000_000
+    max_read_bytes: int = 1_000_000_000   # Default 1GB. Increase if you have more RAM - the LLM only sees query results, not the file.
+    max_write_bytes: int = 100_000_000    # 100 MB
 
 
 @dataclass
@@ -2846,6 +2846,12 @@ def main() -> None:
         action="store_true",
         help="Require confirm=true for action tools",
     )
+    parser.add_argument(
+        "--max-file-size",
+        type=int,
+        default=1_000_000_000,
+        help="Max file size in bytes for load_file/read_file (default: 1GB). Increase based on your RAM—the LLM only sees query results.",
+    )
 
     args = parser.parse_args()
 
@@ -2859,6 +2865,7 @@ def main() -> None:
         workspace_root=Path(args.workspace_root).resolve() if args.workspace_root else _detect_workspace_root(),
         workspace_mode=cast(WorkspaceMode, args.workspace_mode),
         require_confirmation=bool(args.require_confirmation),
+        max_read_bytes=args.max_file_size,
     )
 
     server = AlephMCPServerLocal(sandbox_config=config, action_config=action_cfg)
