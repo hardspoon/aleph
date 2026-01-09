@@ -31,6 +31,8 @@ Traditional LLMs are limited by their context window (~200K tokens). Aleph sides
 - **Only query results** (kilobytes) enter the LLM's context—never the full file
 - **Your RAM is the limit**, not the model's context window (with a default 1GB safety cap)
 
+You can load **multiple files or entire repos** as separate contexts and query them independently.
+
 A 50MB log file? The LLM sees ~1KB of search results. A 2GB database dump? Same—just the slices you ask for.
 
 By default, Aleph sets a **1GB max file size** to avoid accidental overload, but you can raise it with `--max-file-size` based on your machine.
