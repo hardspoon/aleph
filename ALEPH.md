@@ -104,12 +104,35 @@ for i, c in enumerate(chunks):
 
 Each `sub_query` spawns an independent sub-agent. You aggregate the results.
 
+### Sub-query backends
+
+When `ALEPH_SUB_QUERY_BACKEND` is `auto` (default), Aleph chooses the first available backend:
+
+1. **API** - if `MIMO_API_KEY` or `OPENAI_API_KEY` is available
+2. **claude CLI** - if installed
+3. **codex CLI** - if installed
+4. **aider CLI** - if installed
+
+Quick setup:
+
+```bash
+export ALEPH_SUB_QUERY_BACKEND=auto
+export ALEPH_SUB_QUERY_MODEL=mimo-v2-flash
+export MIMO_API_KEY=your_key
+
+# Or use any OpenAI-compatible provider:
+export OPENAI_API_KEY=your_key
+export OPENAI_BASE_URL=https://api.xiaomimimo.com/v1
+```
+
+> **Note:** Some MCP clients don't reliably pass `env` vars from their config to the server process. If `sub_query` reports "API key not found" despite your client's MCP settings, add the exports to your shell profile (`~/.zshrc` or `~/.bashrc`) and restart your terminal/client.
+
 ## Tools Reference
 
 | Tool | What It Does |
 |------|--------------|
 | `load_context` | Store document externally |
-| `load_file` | Load a workspace file into a context (action tool) |
+| `load_file` | Load a workspace file into a context (action tool; requires `--enable-actions`) |
 | `search_context` | Find patterns (regex) |
 | `peek_context` | View specific lines/chars |
 | `exec_python` | Run code on the document |
@@ -156,17 +179,4 @@ Plus 80+ extractors: `extract_emails()`, `extract_dates()`, `word_frequency()`, 
 
 ## Configuration
 
-`sub_query` backend priority (when `backend="auto"`):
-
-1. **API** — if `MIMO_API_KEY` or `OPENAI_API_KEY` set
-2. **claude CLI** — if installed
-3. **codex CLI** — if installed
-4. **aider CLI** — if installed
-
-Override with environment variables:
-
-```bash
-export ALEPH_SUB_QUERY_BACKEND=api   # Force API
-export MIMO_API_KEY=your_key         # API credentials
-export ALEPH_SUB_QUERY_MODEL=gpt-4o  # Custom model
-```
+For full configuration options (limits, budgets, and backend details), see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).

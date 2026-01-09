@@ -1,6 +1,7 @@
 # MCP Server Configuration Guide
 
 This guide explains how to properly configure aleph as an MCP server in **all major MCP-compatible clients**: Cursor, VS Code, Claude Desktop, OpenAI Codex, Windsurf, and others.
+It focuses on `aleph`, which supports action tools and workspace scoping.
 
 ## The Workspace Root Issue
 
@@ -20,7 +21,7 @@ Create or edit `.cursor/mcp.json`:
 {
   "mcpServers": {
     "aleph": {
-      "command": "aleph-mcp-local",
+      "command": "aleph",
       "args": [
         "--workspace-root",
         "/Volumes/VIXinSSD/aleph",
@@ -39,7 +40,7 @@ Create or edit `.vscode/mcp.json`:
 {
   "mcpServers": {
     "aleph": {
-      "command": "aleph-mcp-local",
+      "command": "aleph",
       "args": [
         "--workspace-root",
         "/Volumes/VIXinSSD/aleph",
@@ -68,7 +69,7 @@ Add to `~/.claude/settings.json`:
 {
   "mcpServers": {
     "aleph": {
-      "command": "aleph-mcp-local",
+      "command": "aleph",
       "args": [
         "--workspace-root",
         "/Volumes/VIXinSSD/aleph",
@@ -96,7 +97,7 @@ Add to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.aleph]
-command = "aleph-mcp-local"
+command = "aleph"
 args = ["--enable-actions"]
 ```
 
@@ -104,7 +105,7 @@ To enable actions (read_file, write_file, etc.), use:
 
 ```toml
 [mcp_servers.aleph]
-command = "aleph-mcp-local"
+command = "aleph"
 args = ["--workspace-root", "/Volumes/VIXinSSD/aleph", "--enable-actions"]
 ```
 
@@ -121,7 +122,7 @@ This enables aleph commands in Codex.
 
 ## Parameters Explained
 
-All MCP servers support these parameters:
+These parameters apply to `aleph`:
 
 - `--workspace-root <path>` - The root directory for file operations (read_file, write_file, run_command, etc.)
 - `--workspace-mode <fixed|git|any>` - Path scope for actions: `fixed` (workspace root only), `git` (any git repo), `any` (no path restriction)
@@ -131,6 +132,31 @@ All MCP servers support these parameters:
 - `--max-output <chars>` - Maximum output characters from commands (default: 10000)
 - `--max-read-bytes <bytes>` - Maximum file read size (default: 1000000)
 - `--max-write-bytes <bytes>` - Maximum file write size (default: 1000000)
+
+## Sub-query backends
+
+`sub_query` can use an API backend (OpenAI-compatible) or a local CLI backend. When `ALEPH_SUB_QUERY_BACKEND` is `auto` (default), Aleph chooses the first available backend:
+
+1. **API** - if `MIMO_API_KEY` or `OPENAI_API_KEY` is available
+2. **claude CLI** - if installed
+3. **codex CLI** - if installed
+4. **aider CLI** - if installed
+
+Quick setup:
+
+```bash
+export ALEPH_SUB_QUERY_BACKEND=auto
+export ALEPH_SUB_QUERY_MODEL=mimo-v2-flash
+export MIMO_API_KEY=your_key
+
+# Or use any OpenAI-compatible provider:
+export OPENAI_API_KEY=your_key
+export OPENAI_BASE_URL=https://api.xiaomimimo.com/v1
+```
+
+> **Note:** Some MCP clients don't reliably pass `env` vars from their config to the server process. If `sub_query` reports "API key not found" despite your client's MCP settings, add the exports to your shell profile (`~/.zshrc` or `~/.bashrc`) and restart your terminal/client.
+
+For a full list of options, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
 ## Finding Your Workspace Root
 
@@ -155,7 +181,7 @@ If you need to work across multiple repos in one MCP server, prefer `--workspace
 {
   "mcpServers": {
     "aleph": {
-      "command": "aleph-mcp-local",
+      "command": "aleph",
       "args": [
         "--workspace-root",
         "/Users/yourname/projects/my-python-app",
@@ -174,7 +200,7 @@ For a monorepo, set workspace to a subdirectory:
 {
   "mcpServers": {
     "aleph": {
-      "command": "aleph-mcp-local",
+      "command": "aleph",
       "args": [
         "--workspace-root",
         "/Users/yourname/monorepo/packages/frontend",
@@ -193,7 +219,7 @@ For development on remote machines:
 {
   "mcpServers": {
     "aleph": {
-      "command": "aleph-mcp-local",
+      "command": "aleph",
       "args": [
         "--workspace-root",
         "/remote/path/to/project",
@@ -214,7 +240,7 @@ Customize limits for your use case:
 {
   "mcpServers": {
     "aleph": {
-      "command": "aleph-mcp-local",
+      "command": "aleph",
       "args": [
         "--workspace-root", "/path/to/project",
         "--enable-actions",
@@ -242,7 +268,7 @@ Allow action tools to operate in any git repo on the machine:
 {
   "mcpServers": {
     "aleph": {
-      "command": "aleph-mcp-local",
+      "command": "aleph",
       "args": [
         "--enable-actions",
         "--workspace-mode",
@@ -366,7 +392,7 @@ If you intentionally want multi-repo access, use `--workspace-mode git` or `--wo
 **Codex:**
 ```toml
 [mcp_servers.aleph]
-command = "aleph-mcp-local"
+command = "aleph"
 args = ["--workspace-root", "/Volumes/VIXinSSD/aleph", "--enable-actions"]
 ```
 
@@ -392,7 +418,7 @@ All clients require adding `--enable-actions`:
 
 **Possible causes:**
 1. aleph not installed: `pip install aleph[mcp]`
-2. Entry point not available: Run `aleph-mcp-local --help` to test
+2. Entry point not available: Run `aleph --help` to test
 3. Python not in PATH: Use full path to python/python3
 4. Workspace root path incorrect
 5. MCP client not restarted after config changes
@@ -400,13 +426,13 @@ All clients require adding `--enable-actions`:
 **Debug steps:**
 ```bash
 # Test if command works
-aleph-mcp-local --help
+aleph --help
 
 # Check installation
 pip show aleph
 
 # Test server manually
-python3 -m aleph.mcp.local_server --help
+python3 -m aleph.mcp.server --help
 
 # Restart MCP client (Cursor/VS Code/Claude Desktop)
 ```
@@ -420,9 +446,9 @@ python3 -m aleph.mcp.local_server --help
 **Solution:** Add credentials to your shell profile:
 ```bash
 # For bash/zsh
-export OPENAI_API_KEY=...
-export OPENAI_BASE_URL=https://api.openai.com/v1
-export ANTHROPIC_API_KEY=...
+export MIMO_API_KEY=...           # or OPENAI_API_KEY
+export OPENAI_BASE_URL=https://api.xiaomimimo.com/v1
+export ALEPH_SUB_QUERY_MODEL=mimo-v2-flash
 ```
 
 Then restart your terminal/MCP client.
@@ -439,7 +465,7 @@ Windsurf uses standard MCP configuration files. Add to your MCP settings:
 {
   "mcpServers": {
     "aleph": {
-      "command": "aleph-mcp-local",
+      "command": "aleph",
       "args": [
         "--workspace-root",
         "/Volumes/VIXinSSD/aleph",
@@ -457,7 +483,7 @@ These clients support standard MCP configuration. Check their documentation for 
 ### Generic MCP Client
 
 If your MCP client uses a different configuration system, the key parameters are:
-- Command: `aleph-mcp-local`
+- Command: `aleph`
 - Required args: `--workspace-root /path/to/project`
 - Optional args: `--enable-actions`, `--require-confirmation`, `--timeout`, etc.
 

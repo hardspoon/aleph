@@ -6,13 +6,7 @@ The MCP server is an optional feature. Install with:
 
 Then run:
 
-    # API-dependent mode (uses external LLM for sub-queries)
-    python -m aleph.mcp.server --provider anthropic --model claude-sonnet-4-20250514
-
-    # API-free mode (host AI provides reasoning)
-    python -m aleph.mcp.local_server
-    # or
-    aleph-mcp-local
+    aleph
 """
 
 from typing import TYPE_CHECKING

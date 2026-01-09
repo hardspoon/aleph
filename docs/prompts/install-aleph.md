@@ -35,7 +35,7 @@ I need you to install and configure Aleph (an MCP server for recursive LLM reaso
    {
      "mcpServers": {
        "aleph": {
-         "command": "aleph-mcp-local",
+         "command": "aleph",
          "args": ["--enable-actions"]
        }
      }
@@ -45,7 +45,7 @@ I need you to install and configure Aleph (an MCP server for recursive LLM reaso
    **Codex CLI** (~/.codex/config.toml):
    ```toml
    [mcp_servers.aleph]
-   command = "aleph-mcp-local"
+   command = "aleph"
    args = ["--enable-actions"]
    ```
 

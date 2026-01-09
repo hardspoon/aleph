@@ -13,7 +13,7 @@ aleph-rlm install codex
 Manual config (TOML) in `~/.codex/config.toml`:
 ```toml
 [mcp_servers.aleph]
-command = "aleph-mcp-local"
+command = "aleph"
 args = ["--enable-actions"]
 ```
 
@@ -33,15 +33,13 @@ Restart Codex CLI after changes.
 
 If your client exposes MCP server settings, add a server with:
 - Name: `aleph`
-- Command: `aleph-mcp-local`
+- Command: `aleph`
 - Args: `["--enable-actions"]`
 
 Notes:
-- The client must run on the same machine where `aleph-mcp-local` is installed.
+- The client must run on the same machine where `aleph` is installed.
 - Verify installation with `aleph-rlm doctor`.
 
 ## Troubleshooting
 
-- If `aleph-mcp-local` is not found, reinstall: `pip install aleph-rlm[mcp]`.
-- If you need a provider-backed MCP server (non-local), use `aleph-mcp` and pass
-  provider/model flags in your MCP client command.
+- If `aleph` is not found, reinstall: `pip install aleph-rlm[mcp]`.

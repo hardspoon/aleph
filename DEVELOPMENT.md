@@ -16,8 +16,8 @@ aleph/
 ├── cli.py               # CLI entry points (aleph-rlm install/doctor)
 ├── recipe.py            # Alephfile/recipe support for reproducible runs
 ├── mcp/
-│   ├── local_server.py  # API-free MCP server (main entry point)
-│   └── server.py        # API-backed MCP server
+│   ├── local_server.py  # MCP server (main entry point)
+│   └── server.py        # Compatibility entry point (aliases local_server)
 ├── repl/
 │   ├── sandbox.py       # REPLEnvironment - sandboxed code execution
 │   └── helpers.py       # 80+ helper functions (peek, search, extract_*, etc.)
@@ -45,7 +45,7 @@ pip install -e '.[dev,mcp]'
 python3 -m pytest -q
 
 # Run MCP server locally (with action tools enabled)
-aleph-mcp-local --enable-actions
+aleph --enable-actions
 ```
 
 ## Architecture
@@ -238,7 +238,7 @@ HELPER_FUNCTIONS = {
 | `MIMO_API_KEY` | Mimo API key for sub-queries |
 | `OPENAI_API_KEY` | OpenAI-compatible API key |
 | `OPENAI_BASE_URL` | API endpoint (default: `https://api.xiaomimimo.com/v1`) |
-| `ANTHROPIC_API_KEY` | For API-backed server |
+| `ANTHROPIC_API_KEY` | For Anthropic provider usage (non-MCP integrations) |
 | `ALEPH_MAX_ITERATIONS` | Iteration limit |
 | `ALEPH_MAX_COST` | Cost limit in USD |
 

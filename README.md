@@ -26,29 +26,15 @@ After installation, you can automatically configure popular MCP clients:
 aleph-rlm install
 ```
 
-## MCP Server Options
+## MCP Server
 
-Aleph provides two MCP servers with different capabilities:
+Run Aleph as an MCP server with:
 
-| Feature | `aleph-mcp-local` (Recommended) | `aleph-mcp` (Advanced) |
-|---------|-------------------------------|---------------------------|
-| **Purpose** | Full-featured RLM server with action tools | Lightweight, stateless server |
-| **Context Management** | In-memory session with evidence tracking | Stateless session dictionary |
-| **Action Tools** | `load_file`, `write_file`, `run_command`, etc. (with `--enable-actions`) | Not available |
-| **Sub-Query Backend** | Auto-detects CLI or API backends | Not available |
-| **Evidence Tracking** | Full provenance with line ranges and citations | Basic tracking |
-| **Best For** | Daily use, file operations, complex workflows | Custom integrations, minimal setup |
+```bash
+aleph
+```
 
-**Use `aleph-mcp-local` (recommended):**
-- Most users and use cases
-- Need file system access (`load_file`, `write_file`)
-- Want automatic sub-query backend detection
-- Need evidence tracking and session management
-
-**Use `aleph-mcp` (advanced only):**
-- Custom integration requiring stateless operation
-- Lightweight deployment without dependencies
-- Don't need action tools or sub-query
+Use `--enable-actions` to allow file and command tools.
 
 ## Integration
 
@@ -60,7 +46,7 @@ Add Aleph to your `mcpServers` configuration:
 {
   "mcpServers": {
     "aleph": {
-      "command": "aleph-mcp-local",
+      "command": "aleph",
       "args": ["--enable-actions"]
     }
   }
@@ -84,7 +70,7 @@ To use Aleph with Claude Code, register the MCP server and install the workflow 
 
 ```bash
 # Register the MCP server
-claude mcp add aleph aleph-mcp-local -- --enable-actions
+claude mcp add aleph aleph -- --enable-actions
 
 # Add the workflow prompt
 mkdir -p ~/.claude/commands
@@ -97,13 +83,13 @@ Add to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.aleph]
-command = "aleph-mcp-local"
+command = "aleph"
 args = ["--enable-actions"]
 ```
 
 ## How It Works
 
-1. **Load**: Store a document in external memory via `load_context` or `load_file`.
+1. **Load**: Store a document in external memory via `load_context` or `load_file` (with `--enable-actions`).
 2. **Explore**: Search for patterns using `search_context` or view slices with `peek_context`.
 3. **Compute**: Run Python scripts over the content in a secure sandbox via `exec_python`.
 4. **Finalize**: Generate an answer with linked evidence and citations using `finalize`.
@@ -123,66 +109,101 @@ results = [sub_query("Extract key findings.", context_slice=c) for c in chunks]
 final = sub_query("Synthesize into a summary:", context_slice="\n\n".join(results))
 ```
 
-`sub_query` can use an API backend (OpenAI-compatible) or spawn a local CLI (Claude, Codex, Aider)—whichever is available.
+`sub_query` can use an API backend (OpenAI-compatible) or spawn a local CLI (Claude, Codex, Aider) - whichever is available.
 
-## Available Tools
+### Sub-query backends
 
-### Core Exploration
-|| Tool | Description |
-||------|---------|
-|| `load_context` | Store text or JSON in external memory. |
-|| `load_file` | Load a workspace file into a context. |
-|| `search_context` | Perform regex searches with surrounding context. |
-|| `peek_context` | View specific line or character ranges. |
-|| `exec_python` | Run Python code over the loaded content. |
-|| `chunk_context` | Split content into navigable chunks. |
+When `ALEPH_SUB_QUERY_BACKEND` is `auto` (default), Aleph chooses the first available backend:
 
-### Workflow Management
-|| Tool | Description |
-||------|---------|
-|| `think` | Structure reasoning for complex problems. |
-|| `get_status` | Show current session state. |
-|| `get_evidence` | Retrieve collected citations. |
-|| `evaluate_progress` | Self-evaluate progress with convergence tracking. |
-|| `summarize_so_far` | Summarize progress on long tasks. |
-|| `finalize` | Complete with answer and evidence. |
+1. **API** - if `MIMO_API_KEY` or `OPENAI_API_KEY` is available
+2. **claude CLI** - if installed
+3. **codex CLI** - if installed
+4. **aider CLI** - if installed
 
-### Recursion
-|| Tool | Description |
-||------|---------|
-|| `sub_query` | Spawn a sub-agent on a content slice. |
-
-### Session Management
-|| Tool | Description |
-||------|---------|
-|| `load_session` | Load a saved session from file. |
-|| `save_session` | Persist current session to file. |
-
-### Action Tools
-*Enabled with the `--enable-actions` flag.*
-|| Tool | Description |
-||------|---------|
-|| `read_file` / `write_file` | File system access (workspace-scoped). |
-|| `run_command` | Shell execution. |
-|| `run_tests` | Execute test commands. |
-|| `add_remote_server` | Register remote MCP servers. |
-|| `call_remote_tool` | Call tools on remote MCP servers. |
-|| `close_remote_server` | Close remote MCP server connections. |
-
-## Configuration
-
-Sub-query backends and API keys can be configured via environment variables:
+Quick setup:
 
 ```bash
-export ALEPH_SUB_QUERY_BACKEND=auto   # Options: auto, api, claude, codex, aider
-export ALEPH_SUB_QUERY_MODEL=mimo-v2-flash  # Default: Mimo Flash V2 (free until Jan 20, 2026)
-export MIMO_API_KEY=your_key          # API key for Mimo backend
-export OPENAI_BASE_URL=https://api.xiaomimimo.com/v1  # Default endpoint
+export ALEPH_SUB_QUERY_BACKEND=auto
+export ALEPH_SUB_QUERY_MODEL=mimo-v2-flash
+export MIMO_API_KEY=your_key
+
+# Or use any OpenAI-compatible provider:
+export OPENAI_API_KEY=your_key
+export OPENAI_BASE_URL=https://api.xiaomimimo.com/v1
 ```
 
 > **Note:** Some MCP clients don't reliably pass `env` vars from their config to the server process. If `sub_query` reports "API key not found" despite your client's MCP settings, add the exports to your shell profile (`~/.zshrc` or `~/.bashrc`) and restart your terminal/client.
 
 For a full list of options, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+
+## Available Tools
+
+Aleph exposes the full toolset below.
+
+### Core exploration
+| Tool | Description |
+|------|-------------|
+| `load_context` | Store text or JSON in external memory. |
+| `list_contexts` | List loaded contexts and metadata. |
+| `peek_context` | View specific line or character ranges. |
+| `search_context` | Perform regex searches with surrounding context. |
+| `chunk_context` | Split content into navigable chunks. |
+| `diff_contexts` | Diff two contexts (text or JSON). |
+| `exec_python` | Run Python code over the loaded content. |
+| `get_variable` | Retrieve a variable from the exec_python sandbox. |
+
+### Reasoning workflow
+| Tool | Description |
+|------|-------------|
+| `think` | Structure reasoning for complex problems. |
+| `get_status` | Show current session state. |
+| `get_evidence` | Retrieve collected citations. |
+| `evaluate_progress` | Self-evaluate progress with convergence tracking. |
+| `summarize_so_far` | Summarize progress on long tasks. |
+| `finalize` | Complete with answer and evidence. |
+
+### Recursion
+| Tool | Description |
+|------|-------------|
+| `sub_query` | Spawn a sub-agent on a content slice. |
+
+### Session management
+| Tool | Description |
+|------|-------------|
+| `save_session` | Persist current session to file. |
+| `load_session` | Load a saved session from file. |
+
+### Recipes and reporting
+| Tool | Description |
+|------|-------------|
+| `load_recipe` | Load an Alephfile recipe for execution. |
+| `list_recipes` | List loaded recipes and status. |
+| `finalize_recipe` | Finalize a recipe run and generate a result bundle. |
+| `get_metrics` | Get token-efficiency metrics for a recipe/session. |
+| `export_result` | Export a recipe result bundle to a file. |
+| `sign_evidence` | Sign evidence bundles for verification. |
+
+### Remote MCP orchestration
+| Tool | Description |
+|------|-------------|
+| `add_remote_server` | Register a remote MCP server. |
+| `list_remote_servers` | List registered remote MCP servers. |
+| `list_remote_tools` | List tools available on a remote server. |
+| `call_remote_tool` | Call a tool on a remote MCP server. |
+| `close_remote_server` | Close a remote MCP server connection. |
+
+### Action tools
+*Enabled with the `--enable-actions` flag. Use `--workspace-root` and `--workspace-mode` (`fixed`, `git`, `any`) to control scope.*
+| Tool | Description |
+|------|-------------|
+| `load_file` | Load a workspace file into a context. |
+| `read_file` / `write_file` | File system access (workspace-scoped). |
+| `run_command` | Shell execution. |
+| `run_tests` | Execute test commands (supports optional `cwd`). |
+
+## Configuration
+
+For full configuration options (limits, budgets, and backend details), see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
 ## Changelog
 

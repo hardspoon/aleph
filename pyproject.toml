@@ -38,8 +38,7 @@ Homepage = "https://github.com/Hmbown/aleph"
 
 [project.scripts]
 aleph-rlm = "aleph.cli:main"
-aleph-mcp = "aleph.mcp.server:main"
-aleph-mcp-local = "aleph.mcp.local_server:main"
+aleph = "aleph.mcp.local_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["aleph"]

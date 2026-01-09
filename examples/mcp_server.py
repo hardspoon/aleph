@@ -6,7 +6,7 @@ Requires the optional dependency:
 
 Then run:
 
-    python examples/mcp_server.py --provider anthropic --model claude-sonnet-4-20250514
+    python examples/mcp_server.py
 
 This uses stdio transport.
 """
@@ -26,19 +26,16 @@ if str(ROOT) not in sys.path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run Aleph MCP server")
-    parser.add_argument("--provider", default="anthropic", choices=["anthropic", "openai"])
-    parser.add_argument("--model", default=None)
-    args = parser.parse_args()
+    parser.parse_args()
 
     try:
-        from aleph.mcp.server import AlephMCPServer
+        from aleph.mcp.local_server import AlephMCPServerLocal
     except Exception as e:
         raise SystemExit(
             "MCP support not installed. Install with `pip install -e '.[mcp]'`\n\n" + str(e)
         )
 
-    model = args.model or ("claude-sonnet-4-20250514" if args.provider == "anthropic" else "gpt-4o")
-    server = AlephMCPServer(provider=args.provider, model=model)
+    server = AlephMCPServerLocal()
     asyncio.run(server.run())
 
 

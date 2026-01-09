@@ -230,7 +230,7 @@ CLIENTS: dict[str, ClientConfig] = {
 
 # The JSON configuration to inject
 ALEPH_MCP_CONFIG = {
-    "command": "aleph-mcp-local",
+    "command": "aleph",
     "args": ["--enable-actions"],
 }
 
@@ -444,7 +444,7 @@ def install_to_toml_config(
 
     block = (
         "[mcp_servers.aleph]\n"
-        "command = \"aleph-mcp-local\"\n"
+        "command = \"aleph\"\n"
         "args = [\"--enable-actions\"]\n"
     )
 
@@ -616,12 +616,12 @@ def install_to_claude_code(dry_run: bool = False) -> bool:
         return False
 
     if dry_run:
-        print_info(f"[DRY RUN] Would run: {claude_exe} mcp add aleph aleph-mcp-local")
+        print_info(f"[DRY RUN] Would run: {claude_exe} mcp add aleph aleph")
         return True
 
     try:
         result = subprocess.run(
-            [claude_exe, "mcp", "add", "aleph", "aleph-mcp-local"],
+            [claude_exe, "mcp", "add", "aleph", "aleph"],
             capture_output=True,
             text=True,
             timeout=30,
@@ -764,12 +764,12 @@ def doctor() -> bool:
 
     all_ok = True
 
-    # Check if aleph-mcp-local is available
-    print_info("Checking aleph-mcp-local command...")
-    if shutil.which("aleph-mcp-local"):
-        print_success("aleph-mcp-local is in PATH")
+    # Check if aleph is available
+    print_info("Checking aleph command...")
+    if shutil.which("aleph"):
+        print_success("aleph is in PATH")
     else:
-        print_error("aleph-mcp-local not found in PATH")
+        print_error("aleph not found in PATH")
         print_info("Try reinstalling: pip install aleph-rlm[mcp]")
         all_ok = False
 

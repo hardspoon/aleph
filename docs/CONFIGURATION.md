@@ -96,22 +96,22 @@ export ALEPH_SUB_QUERY_MODEL=llama3.1
 
 ```bash
 # Basic usage
-aleph-mcp-local
+aleph
 
 # With action tools enabled (file/command access)
-aleph-mcp-local --enable-actions
+aleph --enable-actions
 
 # Custom timeout and output limits
-aleph-mcp-local --timeout 60 --max-output 20000
+aleph --timeout 60 --max-output 20000
 
 # Require confirmation for action tools
-aleph-mcp-local --enable-actions --require-confirmation
+aleph --enable-actions --require-confirmation
 
 # Custom workspace root
-aleph-mcp-local --enable-actions --workspace-root /path/to/project
+aleph --enable-actions --workspace-root /path/to/project
 
 # Allow any git repo (use absolute paths in tool calls)
-aleph-mcp-local --enable-actions --workspace-mode git
+aleph --enable-actions --workspace-mode git
 ```
 
 ### MCP Client Configuration
@@ -122,7 +122,7 @@ aleph-mcp-local --enable-actions --workspace-mode git
 {
   "mcpServers": {
     "aleph": {
-      "command": "aleph-mcp-local",
+      "command": "aleph",
       "args": ["--enable-actions"]
     }
   }
@@ -135,7 +135,7 @@ aleph-mcp-local --enable-actions --workspace-mode git
 {
   "mcpServers": {
     "aleph": {
-      "command": "aleph-mcp-local",
+      "command": "aleph",
       "args": ["--enable-actions"],
       "env": {
         "MIMO_API_KEY": "your_key",
@@ -150,7 +150,7 @@ aleph-mcp-local --enable-actions --workspace-mode git
 
 ```toml
 [mcp_servers.aleph]
-command = "aleph-mcp-local"
+command = "aleph"
 args = ["--enable-actions"]
 ```
 
@@ -296,21 +296,21 @@ Load with your shell or tool of choice (e.g., `source .env`, `dotenv`, or IDE in
 
 Increase the timeout:
 ```bash
-aleph-mcp-local --timeout 120
+aleph --timeout 120
 ```
 
 ### Output truncated
 
 Increase the output limit:
 ```bash
-aleph-mcp-local --max-output 50000
+aleph --max-output 50000
 ```
 
 ### Actions disabled
 
 Enable action tools:
 ```bash
-aleph-mcp-local --enable-actions
+aleph --enable-actions
 ```
 
 ## See Also

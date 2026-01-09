@@ -1,7 +1,6 @@
-"""API-free MCP server for use with Claude Desktop, Cursor, Windsurf, etc.
+"""Aleph MCP server for use with Claude Desktop, Cursor, Windsurf, etc.
 
-This server exposes Aleph's context exploration tools WITHOUT requiring
-external API calls. The host AI (Claude, GPT, etc.) provides the reasoning.
+This server exposes Aleph's context exploration tools and optional action tools.
 
 Tools:
 - load_context: Load text/data into sandboxed REPL
@@ -19,10 +18,7 @@ Tools:
 - summarize_so_far: Compress reasoning history to manage context window
 
 Usage:
-    python -m aleph.mcp.local_server
-
-Or via entry point:
-    aleph-mcp-local
+    aleph
 """
 
 from __future__ import annotations
@@ -263,13 +259,10 @@ class _RemoteServerHandle:
 
 
 class AlephMCPServerLocal:
-    """API-free MCP server for local AI reasoning.
+    """MCP server for local AI reasoning.
 
     This server provides context exploration tools that work with any
     MCP-compatible AI host (Claude Desktop, Cursor, Windsurf, etc.).
-
-    The key difference from AlephMCPServer: NO external API calls.
-    The host AI provides all the reasoning.
     """
 
     def __init__(
@@ -2812,11 +2805,11 @@ class AlephMCPServerLocal:
 
 
 def main() -> None:
-    """CLI entry point: `aleph-mcp-local` or `python -m aleph.mcp.local_server`"""
+    """CLI entry point: `aleph` or `python -m aleph.mcp.local_server`"""
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Run Aleph as an API-free MCP server for local AI reasoning"
+        description="Run Aleph as an MCP server for local AI reasoning"
     )
     parser.add_argument(
         "--timeout",
