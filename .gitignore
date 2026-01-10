@@ -31,3 +31,7 @@ ENV/
 # Local project artifacts
 .cursor/
 texput.log
+
+# Aleph sessions (large, per-user)
+.aleph/sessions/
+tmp/

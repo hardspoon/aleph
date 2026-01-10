@@ -1,182 +1,419 @@
 ---
 name: aleph
-description: Use Aleph MCP tools to analyze large documents without stuffing them into the context window. Load, search, cite, and finalize with evidence.
+description: /aleph — Become unbounded. Infinite context, recursive reasoning, persistent intelligence.
 ---
 
-# /aleph — Document Analysis Skill
+# /aleph — Unbounded Cognition
 
-**Purpose:** Analyze documents without stuffing them into your context window.
+> **TL;DR**: You have superpowers. Load any size document into external memory, search it, reason in loops, persist across sessions. Your context window is no longer your limit.
 
-## The Core Idea
-
-When you receive a large document, don't paste it into your response context. Instead:
-
-1. **Load** it into Aleph's external memory
-2. **Search** for what you need
-3. **Cite** what you find
-4. **Finalize** with a grounded answer
-
-You never see the full document. You explore it piece by piece, like a human would.
-
-## When to Use This
-
-| Use Aleph | Don't Use Aleph |
-|-----------|-----------------|
-| Document >30k tokens | Short text that fits in context |
-| Need citations with line numbers | Quick answer without evidence |
-| Must find specific information | General knowledge question |
-| Analyzing sections across a long doc | Speed matters more than precision |
-
-## The Process
+## ⚡ Quick Start (10 seconds)
 
 ```
-load_context → search/peek → cite evidence → finalize
+# Test if Aleph is available - run this first:
+list_contexts()
 ```
 
-### 1. Load the Document
+If that works, you're ready. If not, the MCP server isn't running.
 
+**Instant pattern - analyze anything:**
 ```
-load_context(content="<document text>", context_id="doc1")
-```
-
-You receive metadata (size, preview) but NOT the full content. This protects your context window.
-If the document lives in your workspace, you can also use:
-
-```
-load_file(path="docs/ARCHITECTURE.md", context_id="doc1")
+load_context(content="<paste huge content here>", context_id="doc")
+search_context(pattern="keyword", context_id="doc")
+finalize(answer="Found X at line Y", context_id="doc")
 ```
 
-### 2. Search for What You Need
+That's it. You just processed unlimited content without polluting your context window.
+
+> **Note on tool names**: In this doc, tools are shown as `load_context()`. Your MCP client may show them as `mcp__aleph__load_context`. Same tools, different naming conventions.
+
+---
+
+## 🧠 The Paradigm Shift
+
+**OLD YOU**: Limited to ~200k token context window. Paste content → runs out of space.
+
+**NEW YOU**:
+- Process **gigabytes** of content (RAM is your only limit)
+- Think in **loops** until you're confident
+- **Persist** reasoning across sessions
+- **Control** other AI systems via MCP
+- Produce **verifiable** results with evidence
+
+**You are no longer bounded by your context window.**
+
+---
+
+## 🎯 Decision Algorithm
+
+Use this flowchart for EVERY task:
 
 ```
-search_context(pattern="liability|damages", context_id="doc1")
+START
+  │
+  ▼
+Is content > 10k chars? ──YES──► load_context() or load_file()
+  │                                      │
+  NO                                     ▼
+  │                              Need to find something?
+  ▼                                      │
+Handle normally                   YES────► search_context()
+                                         │
+                                         ▼
+                                  Need specific lines?
+                                         │
+                                  YES────► peek_context()
+                                         │
+                                         ▼
+                                  Complex reasoning needed?
+                                         │
+                                  YES────► think() + evaluate_progress() LOOP
+                                         │
+                                         ▼
+                                  Multiple sources?
+                                         │
+                                  YES────► load each with unique context_id
+                                         │
+                                         ▼
+                                  Work spans sessions?
+                                         │
+                                  YES────► save_session() before ending
+                                         │
+                                         ▼
+                                  Done? ──► finalize()
 ```
 
-Returns matching lines with surrounding context (line numbers are 1-based by default). Use regex patterns.
+---
 
-### 3. View Specific Sections
+## 📋 Copy-Paste Patterns
 
+### Pattern 1: Analyze a Document
 ```
-peek_context(start=100, end=150, unit="lines", context_id="doc1")
+load_context(content=document_text, context_id="doc")
+search_context(pattern="important|keyword|pattern", context_id="doc")
+peek_context(start=100, end=150, unit="lines", context_id="doc")
+finalize(answer="Analysis complete: ...", confidence="high", context_id="doc")
 ```
 
-Returns just lines 100-150 (end is inclusive). Only pull what you need.
+### Pattern 2: Compare Two Documents
+```
+load_context(content=doc1, context_id="v1")
+load_context(content=doc2, context_id="v2")
+diff_contexts(a="v1", b="v2")
+search_context(pattern="difference", context_id="v1")
+search_context(pattern="difference", context_id="v2")
+finalize(answer="Key differences: ...", context_id="v1")
+```
 
-### 4. Cite Evidence
+### Pattern 3: Deep Reasoning Loop
+```
+load_context(content=problem, context_id="analysis")
 
-Inside `exec_python`:
-
-```python
-cite(
-    snippet="Contractor shall not be liable for consequential damages",
-    line_range=(142, 145),
-    note="Liability exclusion"
+# Loop until confident
+think(question="What is the core issue?", context_id="analysis")
+search_context(pattern="relevant", context_id="analysis")
+evaluate_progress(
+    current_understanding="I found X...",
+    remaining_questions=["What about Y?"],
+    confidence_score=0.7,
+    context_id="analysis"
 )
+# If confidence < 0.9, loop back to think()
+# If confidence >= 0.9, finalize()
+
+finalize(answer="Conclusion: ...", confidence="high", context_id="analysis")
 ```
 
-### 5. Finalize
-
+### Pattern 4: Process Huge File (>100k chars)
 ```
-finalize(
-    answer="Found 3 liability exclusions...",
-    confidence="high",
-    context_id="doc1"
-)
-```
+load_file(path="huge_file.txt", context_id="huge")
+chunk_context(chunk_size=50000, context_id="huge")
 
-Returns your answer with all evidence attached.
-
-## For Very Large Documents
-
-If the document is huge (>100k chars), use `sub_query` to analyze chunks independently:
-
-```python
-# Inside exec_python
-chunks = chunk(100000)  # Split into 100k char chunks
-
+# For each chunk, use exec_python:
+exec_python(code="""
+chunks = chunk(50000)
 for i, c in enumerate(chunks):
-    result = sub_query(
-        prompt="What liability risks are in this section?",
-        context_slice=c
-    )
-    print(f"Chunk {i+1}: {result}")
+    result = sub_query(prompt="Summarize this section", context_slice=c)
+    print(f"Chunk {i}: {result}")
+""", context_id="huge")
 ```
 
-Each `sub_query` spawns an independent sub-agent. You aggregate the results.
+### Pattern 5: Cross-Session Work
+```
+# At END of session:
+save_session(path="my_analysis.json", context_id="work")
 
-### Sub-query backends
-
-When `ALEPH_SUB_QUERY_BACKEND` is `auto` (default), Aleph chooses the first available backend:
-
-1. **API** - if `MIMO_API_KEY` or `OPENAI_API_KEY` is available
-2. **claude CLI** - if installed
-3. **codex CLI** - if installed
-4. **aider CLI** - if installed
-
-Quick setup:
-
-```bash
-export ALEPH_SUB_QUERY_BACKEND=auto
-export ALEPH_SUB_QUERY_MODEL=mimo-v2-flash
-export MIMO_API_KEY=your_key
-
-# Or use any OpenAI-compatible provider:
-export OPENAI_API_KEY=your_key
-export OPENAI_BASE_URL=https://api.xiaomimimo.com/v1
+# At START of next session:
+load_session(path="my_analysis.json")
+get_status(context_id="work")  # See where you left off
+get_evidence(context_id="work")  # See what you found
 ```
 
-> **Note:** Some MCP clients don't reliably pass `env` vars from their config to the server process. If `sub_query` reports "API key not found" despite your client's MCP settings, add the exports to your shell profile (`~/.zshrc` or `~/.bashrc`) and restart your terminal/client.
+### Pattern 6: Control Other MCP Servers
+```
+# Register another MCP server
+add_remote_server(
+    server_id="browser",
+    command="npx",
+    args=["@anthropic/mcp-server-puppeteer"]
+)
 
-## Tools Reference
+# Discover what it can do
+list_remote_tools(server_id="browser")
 
-| Tool | What It Does |
-|------|--------------|
-| `load_context` | Store document externally |
-| `load_file` | Load a workspace file into a context (action tool; requires `--enable-actions`) |
-| `search_context` | Find patterns (regex) |
-| `peek_context` | View specific lines/chars |
-| `exec_python` | Run code on the document |
-| `sub_query` | Analyze chunks independently |
-| `chunk_context` | Get chunk boundaries |
-| `get_evidence` | See all citations |
-| `finalize` | Complete with answer + evidence |
+# Use it
+call_remote_tool(
+    server_id="browser",
+    tool="navigate",
+    arguments={"url": "https://example.com"}
+)
+```
 
-## Helpers in exec_python
+---
 
-You have access to:
+## 💾 Session Persistence
 
-- `ctx` — the document
+Sessions let you save your reasoning state and resume later—even across days or conversations. This is how you build **persistent intelligence**.
+
+### Where Sessions Are Saved
+
+Sessions save to **wherever you specify** via the `path` parameter. By default, this is relative to the MCP server's working directory.
+
+```
+save_session(path="my_session.json")     # → ./my_session.json
+save_session(path="tmp/analysis.json")   # → ./tmp/analysis.json
+save_session(path="/absolute/path.json") # → /absolute/path.json
+```
+
+### Recommended Convention: `.aleph/` Directory
+
+For repo-specific work, use a `.aleph/` directory in the repo root:
+
+```
+your-repo/
+├── .aleph/
+│   ├── sessions/
+│   │   ├── auth-refactor.json       # Task-based naming
+│   │   ├── bug-123-investigation.json
+│   │   └── architecture-review.json
+│   └── recipes/
+│       └── security-audit.yaml
+├── src/
+└── ...
+```
+
+**Pattern:**
+```
+# Save with descriptive task name
+save_session(path=".aleph/sessions/auth-refactor.json", context_id="work")
+
+# Load in next session
+load_session(path=".aleph/sessions/auth-refactor.json")
+get_status(context_id="work")  # See where you left off
+```
+
+### Naming Convention
+
+Use descriptive names that identify:
+1. **What** you're working on (task/feature/bug)
+2. **When** (optional, for versioning)
+
+```
+# Good names
+.aleph/sessions/payment-integration.json
+.aleph/sessions/issue-456-memory-leak.json
+.aleph/sessions/2024-01-api-migration.json
+
+# Bad names
+session.json          # Too generic
+temp.json            # Meaningless
+my_stuff.json        # What stuff?
+```
+
+### What Gets Saved
+
+A session file contains:
+- All loaded contexts (the actual content)
+- Evidence/citations collected
+- Think history and reasoning steps
+- Variables from exec_python
+- Iteration count and metadata
+
+### Multi-Repo Workflow
+
+If you work across multiple repos, include repo info in the path:
+
+```
+# From repo root, save to .aleph/
+save_session(path=".aleph/sessions/current-task.json")
+
+# Or use absolute paths with repo names
+save_session(path="~/.aleph/sessions/myrepo-auth-work.json")
+```
+
+### Resume Checklist
+
+When resuming a session:
+```
+load_session(path=".aleph/sessions/task.json")
+get_status(context_id="work")     # What was loaded?
+get_evidence(context_id="work")   # What did I find?
+list_contexts()                   # What contexts exist?
+```
+
+### Git Integration
+
+Add `.aleph/sessions/` to `.gitignore` to avoid committing large session files:
+
+```gitignore
+# .gitignore
+.aleph/sessions/
+```
+
+Or commit them if you want shared team memory:
+```gitignore
+# Only ignore local sessions
+.aleph/sessions/local-*.json
+```
+
+---
+
+## 🚫 Anti-Patterns (NEVER DO THESE)
+
+| ❌ DON'T | ✅ DO INSTEAD |
+|---------|---------------|
+| Paste huge content into your response | `load_context()` then `search_context()` |
+| Guess without searching | `search_context()` first, always |
+| Skip evidence | `cite()` in exec_python, always |
+| Forget to finalize | `finalize()` when done |
+| Try to hold everything in memory | Let Aleph hold it externally |
+| Give up on complex problems | Use `think()` + `evaluate_progress()` loop |
+
+---
+
+## 🔧 Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| "Tool not found" | MCP server not running. Check `aleph` command. |
+| "Context not found" | Check `context_id` spelling. Use `list_contexts()` |
+| Search returns nothing | Broaden your regex pattern |
+| Running out of context | Use `summarize_so_far()` to compress |
+| Need to continue later | `save_session()` before ending |
+| Session file not found | Check path is relative to MCP server's working dir |
+| Lost session context_id | Use `list_contexts()` after `load_session()` |
+
+---
+
+## 📚 Complete Tools Reference
+
+### Loading & Querying
+| Tool | Purpose |
+|------|---------|
+| `load_context` | Load text/data into external memory |
+| `load_file` | Load file from disk (needs --enable-actions) |
+| `list_contexts` | See all loaded contexts |
+| `search_context` | Regex search with surrounding context |
+| `peek_context` | View specific line/char ranges |
+| `chunk_context` | Split into navigable chunks |
+| `diff_contexts` | Compare two contexts |
+
+### Reasoning
+| Tool | Purpose |
+|------|---------|
+| `think` | Structure a reasoning sub-step |
+| `evaluate_progress` | Self-assess (loops until confident) |
+| `summarize_so_far` | Compress reasoning history |
+| `exec_python` | Run code over content |
+| `get_status` | Session state |
+| `get_evidence` | View citations |
+| `finalize` | Complete with answer |
+
+### Recursion
+| Tool | Purpose |
+|------|---------|
+| `sub_query` | Spawn sub-agent for chunk |
+
+### Persistence
+| Tool | Purpose |
+|------|---------|
+| `save_session` | Save state to file |
+| `load_session` | Resume from file |
+
+### Remote Control
+| Tool | Purpose |
+|------|---------|
+| `add_remote_server` | Register MCP server |
+| `list_remote_tools` | Discover tools |
+| `call_remote_tool` | Execute remote tool |
+| `close_remote_server` | Disconnect |
+
+### Reproducibility
+| Tool | Purpose |
+|------|---------|
+| `load_recipe` | Load analysis workflow |
+| `finalize_recipe` | Generate result bundle |
+| `export_result` | Export to file |
+| `sign_evidence` | Cryptographic verification |
+
+---
+
+## 🧪 Helpers in exec_python
+
+Inside `exec_python`, you have:
+
+**Context access:**
+- `ctx` — the loaded document
 - `peek(start, end)` — view chars
 - `lines(start, end)` — view lines
 - `search(pattern)` — regex search
 - `chunk(size)` — split into chunks
+
+**Evidence:**
 - `cite(snippet, line_range, note)` — track evidence
+
+**Recursion:**
 - `sub_query(prompt, context_slice)` — spawn sub-agent
-- `allowed_imports()` — list allowed imports in the sandbox
-- `is_import_allowed(name)` — check if an import is allowed
-- `blocked_names()` — list forbidden builtin names
 
-Plus 80+ extractors: `extract_emails()`, `extract_dates()`, `word_frequency()`, etc.
+**80+ extractors:** `extract_emails()`, `extract_dates()`, `extract_urls()`, `extract_functions()`, `word_frequency()`, etc.
 
-## Example
+---
 
-**User:** "Find the indemnification clauses in this contract"
+## 🏆 The Godlike Pattern
 
-**You do:**
+For maximum power, combine everything:
 
-1. `load_context(content=contract, context_id="contract")`
-2. `search_context(pattern="indemnif|hold harmless", context_id="contract")`
-3. `peek_context` on the matching line ranges
-4. `exec_python` with `cite()` for each clause
-5. `finalize` with list of clauses + line numbers
+```python
+# 1. Load multiple sources
+load_file(path="source1.txt", context_id="s1")
+load_file(path="source2.txt", context_id="s2")
 
-**You don't:**
+# 2. Reasoning loop
+while True:
+    think(question="What patterns exist across both sources?")
 
-- Paste the whole contract in your response
-- Guess without searching
-- Skip citations
-- Try to hold it all in memory
+    search_context(pattern="pattern", context_id="s1")
+    search_context(pattern="pattern", context_id="s2")
 
-## Configuration
+    exec_python("cite(snippet='...', note='key finding')")
 
-For full configuration options (limits, budgets, and backend details), see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+    result = evaluate_progress(
+        current_understanding="Found X, Y, Z...",
+        confidence_score=confidence
+    )
+
+    if confidence >= 0.95:
+        break
+
+    summarize_so_far()  # Compress if context getting long
+
+# 3. Finalize
+finalize(answer="Comprehensive analysis: ...", confidence="high")
+
+# 4. Persist
+save_session(path="analysis.json")
+```
+
+---
+
+**You are now unbounded. Go forth and reason without limits.**

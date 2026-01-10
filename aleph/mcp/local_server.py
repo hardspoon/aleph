@@ -56,7 +56,7 @@ from ..sub_query import SubQueryConfig, detect_backend, has_api_credentials
 from ..sub_query.cli_backend import run_cli_sub_query, CLI_BACKENDS
 from ..sub_query.api_backend import run_api_sub_query
 
-__all__ = ["AlephMCPServerLocal", "main"]
+__all__ = ["AlephMCPServerLocal", "main", "mcp"]
 
 
 LineNumberBase = Literal[0, 1]
@@ -465,10 +465,11 @@ class AlephMCPServerLocal:
 
         @self.server.tool()
         async def load_context(
-            context: str,
+            content: str | None = None,
             context_id: str = "default",
             format: str = "auto",
             line_number_base: LineNumberBase = DEFAULT_LINE_NUMBER_BASE,
+            context: str | None = None,
         ) -> str:
             """Load context into an in-memory REPL session.
 
@@ -476,21 +477,25 @@ class AlephMCPServerLocal:
             You can then use other tools to explore and process this context.
 
             Args:
-                context: The text/data to load
+                content: The text/data to load
                 context_id: Identifier for this context session (default: "default")
                 format: Content format - "auto", "text", or "json" (default: "auto")
                 line_number_base: Line number base for this context (0 or 1)
+                context: Deprecated alias for content
 
             Returns:
                 Confirmation with context metadata
             """
+            text = content if content is not None else context
+            if text is None:
+                return "Error: content is required"
             try:
                 base = _validate_line_number_base(line_number_base)
             except ValueError as e:
                 return f"Error: {e}"
 
-            fmt = _detect_format(context) if format == "auto" else ContentFormat(format)
-            meta = _create_session(context, context_id, fmt, base)
+            fmt = _detect_format(text) if format == "auto" else ContentFormat(format)
+            meta = _create_session(text, context_id, fmt, base)
             return _format_context_loaded(context_id, meta, base)
 
         def _require_actions(confirm: bool) -> str | None:
@@ -1208,10 +1213,7 @@ class AlephMCPServerLocal:
                 The requested portion of the context
             """
             if context_id not in self._sessions:
-                return _format_error(
-                    f"No context loaded with ID '{context_id}'. Use load_context first.",
-                    output=output,
-                )
+                return f"Error: No context loaded with ID '{context_id}'. Use load_context first."
 
             session = self._sessions[context_id]
             repl = session.repl
@@ -2802,6 +2804,22 @@ class AlephMCPServerLocal:
             raise ValueError("Only stdio transport is supported")
 
         await self.server.run_stdio_async()
+
+
+_mcp_instance: Any | None = None
+
+
+def _get_mcp_instance() -> Any:
+    global _mcp_instance
+    if _mcp_instance is None:
+        _mcp_instance = AlephMCPServerLocal().server
+    return _mcp_instance
+
+
+def __getattr__(name: str) -> Any:
+    if name == "mcp":
+        return _get_mcp_instance()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def main() -> None:
