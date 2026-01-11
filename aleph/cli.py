@@ -7,6 +7,7 @@ Provides easy installation of Aleph into various MCP clients:
 - Claude Code
 - VSCode
 - Codex CLI
+- Gemini CLI
 
 Usage:
     aleph-rlm install           # Interactive mode, detects all clients
@@ -15,6 +16,7 @@ Usage:
     aleph-rlm install windsurf
     aleph-rlm install claude-code
     aleph-rlm install codex
+    aleph-rlm install gemini
     aleph-rlm install --all     # Configure all detected clients
     aleph-rlm uninstall <client>
     aleph-rlm doctor            # Verify installation
@@ -179,6 +181,10 @@ def _get_codex_path() -> Path | None:
     """Get Codex CLI config path."""
     return Path.home() / ".codex" / "config.toml"
 
+def _get_gemini_path() -> Path | None:
+    """Get Gemini CLI config path."""
+    return Path.home() / ".gemini" / "mcp.json"
+
 
 # Define all supported clients
 CLIENTS: dict[str, ClientConfig] = {
@@ -226,12 +232,18 @@ CLIENTS: dict[str, ClientConfig] = {
         restart_instruction="Restart Codex CLI to load Aleph",
         config_format="toml",
     ),
+    "gemini": ClientConfig(
+        name="gemini",
+        display_name="Gemini CLI",
+        config_path=_get_gemini_path,
+        restart_instruction="Restart Gemini CLI to load Aleph",
+    ),
 }
 
 # The JSON configuration to inject
 ALEPH_MCP_CONFIG = {
     "command": "aleph",
-    "args": ["--enable-actions"],
+    "args": ["--enable-actions", "--tool-docs", "concise"],
 }
 
 
@@ -298,6 +310,9 @@ def is_client_installed(client: ClientConfig) -> bool:
         return path.parent.exists()
 
     if client.name == "codex":
+        return path.parent.exists()
+
+    if client.name == "gemini":
         return path.parent.exists()
 
     # For project-level configs, always return True (user may want to create)
@@ -940,6 +955,7 @@ Clients:
     vscode             VSCode (project config)
     claude-code        Claude Code CLI
     codex              Codex CLI
+    gemini             Gemini CLI
 
 Options:
     --dry-run          Preview changes without writing

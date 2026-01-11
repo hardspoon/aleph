@@ -15,6 +15,7 @@ I need you to install and configure Aleph (an MCP server for recursive LLM reaso
 3. Cursor - via cursor MCP config
 4. Windsurf - via windsurf MCP config  
 5. Codex CLI - via ~/.codex/config.toml
+6. Gemini CLI - via ~/.gemini/mcp.json
 
 **Tasks:**
 
@@ -33,20 +34,32 @@ I need you to install and configure Aleph (an MCP server for recursive LLM reaso
    **Claude Desktop** (~/Library/Application Support/Claude/claude_desktop_config.json):
    ```json
    {
-     "mcpServers": {
-       "aleph": {
-         "command": "aleph",
-         "args": ["--enable-actions"]
-       }
-     }
-   }
+      "mcpServers": {
+        "aleph": {
+          "command": "aleph",
+          "args": ["--enable-actions", "--tool-docs", "concise"]
+        }
+      }
+    }
    ```
 
    **Codex CLI** (~/.codex/config.toml):
    ```toml
    [mcp_servers.aleph]
    command = "aleph"
-   args = ["--enable-actions"]
+   args = ["--enable-actions", "--tool-docs", "concise"]
+   ```
+
+   **Gemini CLI** (~/.gemini/mcp.json):
+   ```json
+   {
+     "mcpServers": {
+       "aleph": {
+         "command": "aleph",
+         "args": ["--enable-actions", "--tool-docs", "concise"]
+       }
+     }
+   }
    ```
 
 4. Install the `/aleph` skill for Codex CLI:
