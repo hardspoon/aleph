@@ -45,7 +45,7 @@ pip install -e '.[dev,mcp]'
 python3 -m pytest -q
 
 # Run MCP server locally (with action tools enabled)
-aleph --enable-actions
+aleph --enable-actions --tool-docs concise
 ```
 
 ## Architecture

@@ -25,7 +25,9 @@ Create or edit `.cursor/mcp.json`:
       "args": [
         "--workspace-root",
         "/Volumes/VIXinSSD/aleph",
-        "--enable-actions"
+        "--enable-actions",
+        "--tool-docs",
+        "concise"
       ]
     }
   }
@@ -44,7 +46,9 @@ Create or edit `.vscode/mcp.json`:
       "args": [
         "--workspace-root",
         "/Volumes/VIXinSSD/aleph",
-        "--enable-actions"
+        "--enable-actions",
+        "--tool-docs",
+        "concise"
       ]
     }
   }
@@ -73,7 +77,9 @@ Add to `~/.claude/settings.json`:
       "args": [
         "--workspace-root",
         "/Volumes/VIXinSSD/aleph",
-        "--enable-actions"
+        "--enable-actions",
+        "--tool-docs",
+        "concise"
       ]
     }
   }
@@ -98,7 +104,7 @@ Add to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.aleph]
 command = "aleph"
-args = ["--enable-actions"]
+args = ["--enable-actions", "--tool-docs", "concise"]
 ```
 
 To enable actions (read_file, write_file, etc.), use:
@@ -106,7 +112,7 @@ To enable actions (read_file, write_file, etc.), use:
 ```toml
 [mcp_servers.aleph]
 command = "aleph"
-args = ["--workspace-root", "/Volumes/VIXinSSD/aleph", "--enable-actions"]
+args = ["--workspace-root", "/Volumes/VIXinSSD/aleph", "--enable-actions", "--tool-docs", "concise"]
 ```
 
 ### Installing Codex Skill
@@ -186,7 +192,9 @@ If you need to work across multiple repos in one MCP server, prefer `--workspace
       "args": [
         "--workspace-root",
         "/Users/yourname/projects/my-python-app",
-        "--enable-actions"
+        "--enable-actions",
+        "--tool-docs",
+        "concise"
       ]
     }
   }
@@ -205,7 +213,9 @@ For a monorepo, set workspace to a subdirectory:
       "args": [
         "--workspace-root",
         "/Users/yourname/monorepo/packages/frontend",
-        "--enable-actions"
+        "--enable-actions",
+        "--tool-docs",
+        "concise"
       ]
     }
   }
@@ -225,6 +235,8 @@ For development on remote machines:
         "--workspace-root",
         "/remote/path/to/project",
         "--enable-actions",
+        "--tool-docs",
+        "concise",
         "--timeout",
         "60"
       ]
@@ -245,6 +257,8 @@ Customize limits for your use case:
       "args": [
         "--workspace-root", "/path/to/project",
         "--enable-actions",
+        "--tool-docs",
+        "concise",
         "--timeout", "60",
         "--max-output", "50000",
         "--max-read-bytes", "5000000",
@@ -272,6 +286,8 @@ Allow action tools to operate in any git repo on the machine:
       "command": "aleph",
       "args": [
         "--enable-actions",
+        "--tool-docs",
+        "concise",
         "--workspace-mode",
         "git"
       ]
@@ -302,6 +318,8 @@ Use `--require-confirmation` for safer operation:
     "--workspace-root",
         "/path/to/project",
         "--enable-actions",
+        "--tool-docs",
+        "concise",
         "--require-confirmation"
   ]
 }
@@ -318,6 +336,8 @@ Customize limits for your use case:
   "args": [
     "--workspace-root", "/path/to/project",
     "--enable-actions",
+    "--tool-docs",
+    "concise",
     "--timeout", "60",
     "--max-output", "50000",
     "--max-read-bytes", "5000000",
@@ -353,7 +373,9 @@ If you intentionally want multi-repo access, use `--workspace-mode git` or `--wo
       "args": [
         "--workspace-root",
         "/Volumes/VIXinSSD/aleph",
-        "--enable-actions"
+        "--enable-actions",
+        "--tool-docs",
+        "concise"
       ]
     }
   }
@@ -368,7 +390,9 @@ If you intentionally want multi-repo access, use `--workspace-mode git` or `--wo
       "args": [
         "--workspace-root",
         "/Volumes/VIXinSSD/aleph",
-        "--enable-actions"
+        "--enable-actions",
+        "--tool-docs",
+        "concise"
       ]
     }
   }
@@ -383,7 +407,9 @@ If you intentionally want multi-repo access, use `--workspace-mode git` or `--wo
       "args": [
         "--workspace-root",
         "/Volumes/VIXinSSD/aleph",
-        "--enable-actions"
+        "--enable-actions",
+        "--tool-docs",
+        "concise"
       ]
     }
   }
@@ -394,7 +420,7 @@ If you intentionally want multi-repo access, use `--workspace-mode git` or `--wo
 ```toml
 [mcp_servers.aleph]
 command = "aleph"
-args = ["--workspace-root", "/Volumes/VIXinSSD/aleph", "--enable-actions"]
+args = ["--workspace-root", "/Volumes/VIXinSSD/aleph", "--enable-actions", "--tool-docs", "concise"]
 ```
 
 ### "Actions are disabled" Error
@@ -470,7 +496,9 @@ Windsurf uses standard MCP configuration files. Add to your MCP settings:
       "args": [
         "--workspace-root",
         "/Volumes/VIXinSSD/aleph",
-        "--enable-actions"
+        "--enable-actions",
+        "--tool-docs",
+        "concise"
       ]
     }
   }
@@ -486,7 +514,7 @@ These clients support standard MCP configuration. Check their documentation for 
 If your MCP client uses a different configuration system, the key parameters are:
 - Command: `aleph`
 - Required args: `--workspace-root /path/to/project`
-- Optional args: `--enable-actions`, `--require-confirmation`, `--timeout`, etc.
+- Optional args: `--enable-actions`, `--tool-docs <concise|full>`, `--require-confirmation`, `--timeout`, etc.
 
 ## Related Documentation
 

@@ -14,7 +14,7 @@ Manual config (TOML) in `~/.codex/config.toml`:
 ```toml
 [mcp_servers.aleph]
 command = "aleph"
-args = ["--enable-actions"]
+args = ["--enable-actions", "--tool-docs", "concise"]
 ```
 
 Restart Codex CLI after changes.
@@ -34,7 +34,7 @@ Restart Codex CLI after changes.
 If your client exposes MCP server settings, add a server with:
 - Name: `aleph`
 - Command: `aleph`
-- Args: `["--enable-actions"]`
+- Args: `["--enable-actions", "--tool-docs", "concise"]`
 
 Notes:
 - The client must run on the same machine where `aleph` is installed.

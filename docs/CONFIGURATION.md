@@ -99,19 +99,22 @@ export ALEPH_SUB_QUERY_MODEL=llama3.1
 aleph
 
 # With action tools enabled (file/command access)
-aleph --enable-actions
+aleph --enable-actions --tool-docs concise
 
 # Custom timeout and output limits
 aleph --timeout 60 --max-output 20000
 
 # Require confirmation for action tools
-aleph --enable-actions --require-confirmation
+aleph --enable-actions --tool-docs concise --require-confirmation
 
 # Custom workspace root
-aleph --enable-actions --workspace-root /path/to/project
+aleph --enable-actions --tool-docs concise --workspace-root /path/to/project
 
 # Allow any git repo (use absolute paths in tool calls)
-aleph --enable-actions --workspace-mode git
+aleph --enable-actions --tool-docs concise --workspace-mode git
+
+# Full tool docs (larger MCP tool list payload)
+aleph --tool-docs full
 ```
 
 ### MCP Client Configuration
@@ -123,7 +126,7 @@ aleph --enable-actions --workspace-mode git
   "mcpServers": {
     "aleph": {
       "command": "aleph",
-      "args": ["--enable-actions"]
+      "args": ["--enable-actions", "--tool-docs", "concise"]
     }
   }
 }
@@ -136,7 +139,7 @@ aleph --enable-actions --workspace-mode git
   "mcpServers": {
     "aleph": {
       "command": "aleph",
-      "args": ["--enable-actions"],
+      "args": ["--enable-actions", "--tool-docs", "concise"],
       "env": {
         "MIMO_API_KEY": "your_key",
         "OPENAI_BASE_URL": "https://api.xiaomimimo.com/v1"
@@ -151,7 +154,7 @@ aleph --enable-actions --workspace-mode git
 ```toml
 [mcp_servers.aleph]
 command = "aleph"
-args = ["--enable-actions"]
+args = ["--enable-actions", "--tool-docs", "concise"]
 ```
 
 ## Sandbox Configuration
@@ -310,7 +313,7 @@ aleph --max-output 50000
 
 Enable action tools:
 ```bash
-aleph --enable-actions
+aleph --enable-actions --tool-docs concise
 ```
 
 ## See Also
