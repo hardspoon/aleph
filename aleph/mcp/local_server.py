@@ -26,7 +26,9 @@ from __future__ import annotations
 import asyncio
 from contextlib import AsyncExitStack
 import difflib
+import inspect
 import json
+import os
 import re
 import shlex
 import sys
@@ -63,6 +65,8 @@ LineNumberBase = Literal[0, 1]
 DEFAULT_LINE_NUMBER_BASE: LineNumberBase = 1
 WorkspaceMode = Literal["fixed", "git", "any"]
 DEFAULT_WORKSPACE_MODE: WorkspaceMode = "fixed"
+ToolDocsMode = Literal["concise", "full"]
+DEFAULT_TOOL_DOCS_MODE: ToolDocsMode = "concise"
 
 
 @dataclass
@@ -270,10 +274,12 @@ class AlephMCPServerLocal:
         sandbox_config: SandboxConfig | None = None,
         action_config: ActionConfig | None = None,
         sub_query_config: SubQueryConfig | None = None,
+        tool_docs_mode: ToolDocsMode = DEFAULT_TOOL_DOCS_MODE,
     ) -> None:
         self.sandbox_config = sandbox_config or SandboxConfig()
         self.action_config = action_config or ActionConfig()
         self.sub_query_config = sub_query_config or SubQueryConfig()
+        self.tool_docs_mode = tool_docs_mode
         self._sessions: dict[str, _Session] = {}
         self._recipes: dict[str, RecipeRunner] = {}
         self._recipe_results: dict[str, RecipeResult] = {}
@@ -463,7 +469,34 @@ class AlephMCPServerLocal:
             self._sessions[context_id] = session
             return session
 
-        @self.server.tool()
+        def _first_doc_line(fn: Any) -> str:
+            doc = inspect.getdoc(fn) or ""
+            for line in doc.splitlines():
+                line = line.strip()
+                if line:
+                    return line
+            return ""
+
+        def _short_description(fn: Any, override: str | None) -> str:
+            desc = (override or _first_doc_line(fn)).strip()
+            if not desc:
+                desc = fn.__name__.replace("_", " ")
+            max_len = 120
+            if len(desc) > max_len:
+                desc = desc[: max_len - 3].rstrip() + "..."
+            return desc
+
+        def _tool(description: str | None = None, **kwargs: Any) -> Any:
+            def decorator(fn: Any) -> Any:
+                doc = inspect.getdoc(fn) or ""
+                if self.tool_docs_mode == "full" and doc:
+                    return self.server.tool(**kwargs)(fn)
+                desc = _short_description(fn, description)
+                return self.server.tool(description=desc, **kwargs)(fn)
+
+            return decorator
+
+        @_tool()
         async def load_context(
             content: str | None = None,
             context_id: str = "default",
@@ -558,7 +591,7 @@ class AlephMCPServerLocal:
                 "stderr": stderr,
             }
 
-        @self.server.tool()
+        @_tool()
         async def run_command(
             cmd: str,
             cwd: str | None = None,
@@ -596,7 +629,7 @@ class AlephMCPServerLocal:
             _record_action(session, note="run_command", snippet=(payload.get("stdout") or payload.get("stderr") or "")[:200])
             return _format_payload(payload, output=output)
 
-        @self.server.tool()
+        @_tool()
         async def read_file(
             path: str,
             start_line: int = 1,
@@ -675,7 +708,7 @@ class AlephMCPServerLocal:
             _record_action(session, note="read_file", snippet=f"{path} ({start_line}-{end_line})")
             return _format_payload(payload, output=output)
 
-        @self.server.tool()
+        @_tool()
         async def load_file(
             path: str,
             context_id: str = "default",
@@ -727,7 +760,7 @@ class AlephMCPServerLocal:
             _record_action(session, note="load_file", snippet=str(p))
             return _format_context_loaded(context_id, meta, base)
 
-        @self.server.tool()
+        @_tool()
         async def write_file(
             path: str,
             content: str,
@@ -774,7 +807,7 @@ class AlephMCPServerLocal:
             _record_action(session, note="write_file", snippet=f"{path} ({len(payload_bytes)} bytes)")
             return _format_payload(payload, output=output)
 
-        @self.server.tool()
+        @_tool()
         async def run_tests(
             runner: Literal["auto", "pytest"] = "auto",
             args: list[str] | None = None,
@@ -895,7 +928,7 @@ class AlephMCPServerLocal:
 
             return _format_payload(result, output=output)
 
-        @self.server.tool()
+        @_tool()
         async def list_contexts(
             output: Literal["json", "markdown", "object"] = "json",
         ) -> str | dict[str, Any]:
@@ -921,7 +954,7 @@ class AlephMCPServerLocal:
             }
             return _format_payload(payload, output=output)
 
-        @self.server.tool()
+        @_tool()
         async def diff_contexts(
             a: str,
             b: str,
@@ -970,7 +1003,7 @@ class AlephMCPServerLocal:
                 return diff_text
             return f"```diff\n{diff_text}\n```"
 
-        @self.server.tool()
+        @_tool()
         async def save_session(
             session_id: str = "default",
             context_id: str | None = None,
@@ -1050,7 +1083,7 @@ class AlephMCPServerLocal:
             _record_action(session, note="save_session", snippet=str(p))
             return _format_payload({"path": str(p), "bytes_written": len(out_bytes)}, output=output)
 
-        @self.server.tool()
+        @_tool()
         async def load_session(
             path: str,
             session_id: str | None = None,
@@ -1192,7 +1225,7 @@ class AlephMCPServerLocal:
                 output=output,
             )
 
-        @self.server.tool()
+        @_tool()
         async def peek_context(
             start: int = 0,
             end: int | None = None,
@@ -1270,7 +1303,7 @@ class AlephMCPServerLocal:
 
             return f"```\n{result}\n```"
 
-        @self.server.tool()
+        @_tool()
         async def search_context(
             pattern: str,
             context_id: str = "default",
@@ -1372,7 +1405,7 @@ class AlephMCPServerLocal:
                 + "\n\n---\n\n".join(out)
             )
 
-        @self.server.tool()
+        @_tool()
         async def exec_python(
             code: str,
             context_id: str = "default",
@@ -1453,7 +1486,7 @@ class AlephMCPServerLocal:
 
             return "## Execution Result\n\n" + "\n\n".join(parts)
 
-        @self.server.tool()
+        @_tool()
         async def get_variable(
             name: str,
             context_id: str = "default",
@@ -1486,7 +1519,7 @@ class AlephMCPServerLocal:
 
             return f"**`{name}`:** `{value}`"
 
-        @self.server.tool()
+        @_tool()
         async def think(
             question: str,
             context_slice: str | None = None,
@@ -1539,7 +1572,7 @@ class AlephMCPServerLocal:
 
             return "\n".join(parts)
 
-        @self.server.tool()
+        @_tool()
         async def get_status(
             context_id: str = "default",
         ) -> str:
@@ -1644,7 +1677,7 @@ class AlephMCPServerLocal:
 
             return "\n".join(parts)
 
-        @self.server.tool()
+        @_tool()
         async def get_evidence(
             context_id: str = "default",
             limit: int = 20,
@@ -1730,7 +1763,7 @@ class AlephMCPServerLocal:
 
             return "\n".join(parts)
 
-        @self.server.tool()
+        @_tool()
         async def finalize(
             answer: str,
             confidence: Literal["high", "medium", "low"] = "medium",
@@ -1801,7 +1834,7 @@ class AlephMCPServerLocal:
         # Sub-query tool (RLM-style recursive reasoning)
         # =====================================================================
 
-        @self.server.tool()
+        @_tool()
         async def sub_query(
             prompt: str,
             context_slice: str | None = None,
@@ -1916,7 +1949,7 @@ class AlephMCPServerLocal:
         # Remote MCP orchestration (v0.5 last mile)
         # =====================================================================
 
-        @self.server.tool()
+        @_tool()
         async def add_remote_server(
             server_id: str,
             command: str,
@@ -1986,7 +2019,7 @@ class AlephMCPServerLocal:
             }
             return _format_payload(payload, output=output)
 
-        @self.server.tool()
+        @_tool()
         async def list_remote_servers(
             output: Literal["json", "markdown", "object"] = "json",
         ) -> str | dict[str, Any]:
@@ -2007,7 +2040,7 @@ class AlephMCPServerLocal:
                 )
             return _format_payload({"count": len(items), "items": items}, output=output)
 
-        @self.server.tool()
+        @_tool()
         async def list_remote_tools(
             server_id: str,
             confirm: bool = False,
@@ -2026,7 +2059,7 @@ class AlephMCPServerLocal:
                 return _format_error(str(tools), output=output)
             return _format_payload(tools, output=output)
 
-        @self.server.tool()
+        @_tool()
         async def call_remote_tool(
             server_id: str,
             tool: str,
@@ -2081,7 +2114,7 @@ class AlephMCPServerLocal:
             ]
             return "\n".join(parts)
 
-        @self.server.tool()
+        @_tool()
         async def close_remote_server(
             server_id: str,
             confirm: bool = False,
@@ -2099,7 +2132,7 @@ class AlephMCPServerLocal:
                 return json.dumps({"ok": ok, "message": msg}, indent=2)
             return msg
 
-        @self.server.tool()
+        @_tool()
         async def chunk_context(
             chunk_size: int = 2000,
             overlap: int = 200,
@@ -2171,7 +2204,7 @@ class AlephMCPServerLocal:
 
             return "\n".join(parts)
 
-        @self.server.tool()
+        @_tool()
         async def evaluate_progress(
             current_understanding: str,
             remaining_questions: list[str] | str | None = None,
@@ -2253,7 +2286,7 @@ class AlephMCPServerLocal:
 
             return "\n".join(parts)
 
-        @self.server.tool()
+        @_tool()
         async def summarize_so_far(
             include_evidence: bool = True,
             include_variables: bool = True,
@@ -2372,7 +2405,7 @@ class AlephMCPServerLocal:
         # Recipe/Alephfile Tools (v0.5)
         # =====================================================================
 
-        @self.server.tool()
+        @_tool()
         async def load_recipe(
             path: str,
             recipe_id: str = "default",
@@ -2480,7 +2513,7 @@ class AlephMCPServerLocal:
             ])
             return "\n".join(parts)
 
-        @self.server.tool()
+        @_tool()
         async def get_metrics(
             recipe_id: str = "default",
             context_id: str | None = None,
@@ -2550,7 +2583,7 @@ class AlephMCPServerLocal:
 
             return "\n".join(parts)
 
-        @self.server.tool()
+        @_tool()
         async def finalize_recipe(
             recipe_id: str = "default",
             answer: str = "",
@@ -2634,7 +2667,7 @@ class AlephMCPServerLocal:
             ]
             return "\n".join(parts)
 
-        @self.server.tool()
+        @_tool()
         async def export_result(
             recipe_id: str = "default",
             path: str = "aleph_result.json",
@@ -2701,7 +2734,7 @@ class AlephMCPServerLocal:
                 "evidence_count": len(result.evidence_bundle.evidence),
             }, output=output)
 
-        @self.server.tool()
+        @_tool()
         async def sign_evidence(
             recipe_id: str = "default",
             signer_id: str = "local",
@@ -2762,7 +2795,7 @@ class AlephMCPServerLocal:
             ]
             return "\n".join(parts)
 
-        @self.server.tool()
+        @_tool()
         async def list_recipes(
             output: Literal["json", "markdown", "object"] = "json",
         ) -> str | dict[str, Any]:
@@ -2870,6 +2903,15 @@ def main() -> None:
         default=1_000_000_000,
         help="Max file size in bytes for load_file/read_file (default: 1GB). Increase based on your RAM—the LLM only sees query results.",
     )
+    env_tool_docs = os.environ.get("ALEPH_TOOL_DOCS")
+    default_tool_docs = env_tool_docs if env_tool_docs in {"concise", "full"} else DEFAULT_TOOL_DOCS_MODE
+    parser.add_argument(
+        "--tool-docs",
+        type=str,
+        choices=["concise", "full"],
+        default=default_tool_docs,
+        help="Tool description verbosity for MCP clients: concise (default) or full",
+    )
 
     args = parser.parse_args()
 
@@ -2886,7 +2928,11 @@ def main() -> None:
         max_read_bytes=args.max_file_size,
     )
 
-    server = AlephMCPServerLocal(sandbox_config=config, action_config=action_cfg)
+    server = AlephMCPServerLocal(
+        sandbox_config=config,
+        action_config=action_cfg,
+        tool_docs_mode=cast(ToolDocsMode, args.tool_docs),
+    )
     asyncio.run(server.run())
 
 

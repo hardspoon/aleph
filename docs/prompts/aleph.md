@@ -29,6 +29,19 @@ That's it. You just processed unlimited content without polluting your context w
 
 ---
 
+## Tool Docs Strategy
+
+Aleph now sends **concise tool descriptions** to MCP clients to keep the tool list lightweight. The full workflow guidance lives in this `/aleph` skill. If you want the long-form tool docstrings in your MCP client, start the server with `--tool-docs full` or set `ALEPH_TOOL_DOCS=full`.
+
+## Practical Defaults
+
+- Use `output="json"` for structured results and `output="markdown"` for human-readable output.
+- Action tools require starting the server with `--enable-actions` (and may require `confirm=true`).
+- For large docs, combine `chunk_context()` with `peek_context()` to navigate quickly.
+- For long tasks, save state with `save_session()` and resume later.
+
+---
+
 ## 🧠 The Paradigm Shift
 
 **OLD YOU**: Limited to ~200k token context window. Paste content → runs out of space.

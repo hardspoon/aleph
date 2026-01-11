@@ -130,6 +130,7 @@ These parameters apply to `aleph`:
 - `--require-confirmation` - Require `confirm=true` on all action tool calls
 - `--timeout <seconds>` - Sandbox execution timeout (default: 30)
 - `--max-output <chars>` - Maximum output characters from commands (default: 10000)
+- `--tool-docs <concise|full>` - Tool description verbosity for MCP clients (default: concise). Set `ALEPH_TOOL_DOCS=full` for full docs.
 - `--max-read-bytes <bytes>` - Maximum file read size (default: 1000000)
 - `--max-write-bytes <bytes>` - Maximum file write size (default: 1000000)
 
