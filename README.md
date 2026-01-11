@@ -71,7 +71,7 @@ Add Aleph to your `mcpServers` configuration:
   "mcpServers": {
     "aleph": {
       "command": "aleph",
-      "args": ["--enable-actions"]
+      "args": ["--enable-actions", "--tool-docs", "concise"]
     }
   }
 }
@@ -94,7 +94,7 @@ To use Aleph with Claude Code, register the MCP server and install the workflow 
 
 ```bash
 # Register the MCP server
-claude mcp add aleph aleph -- --enable-actions
+claude mcp add aleph aleph -- --enable-actions --tool-docs concise
 
 # Add the workflow prompt
 mkdir -p ~/.claude/commands
@@ -108,7 +108,7 @@ Add to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.aleph]
 command = "aleph"
-args = ["--enable-actions"]
+args = ["--enable-actions", "--tool-docs", "concise"]
 ```
 
 ## How It Works

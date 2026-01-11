@@ -460,7 +460,7 @@ def install_to_toml_config(
     block = (
         "[mcp_servers.aleph]\n"
         "command = \"aleph\"\n"
-        "args = [\"--enable-actions\"]\n"
+        "args = [\"--enable-actions\", \"--tool-docs\", \"concise\"]\n"
     )
 
     if dry_run:
@@ -631,12 +631,14 @@ def install_to_claude_code(dry_run: bool = False) -> bool:
         return False
 
     if dry_run:
-        print_info(f"[DRY RUN] Would run: {claude_exe} mcp add aleph aleph")
+        print_info(
+            f"[DRY RUN] Would run: {claude_exe} mcp add aleph aleph -- --enable-actions --tool-docs concise"
+        )
         return True
 
     try:
         result = subprocess.run(
-            [claude_exe, "mcp", "add", "aleph", "aleph"],
+            [claude_exe, "mcp", "add", "aleph", "aleph", "--", "--enable-actions", "--tool-docs", "concise"],
             capture_output=True,
             text=True,
             timeout=30,
