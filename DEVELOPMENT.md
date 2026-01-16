@@ -245,11 +245,12 @@ HELPER_FUNCTIONS = {
 ## Release Process
 
 1. Update version in `pyproject.toml`
-2. Update CHANGELOG in `README.md`
-3. Run full test suite: `pytest`
-4. Build: `python -m build`
-5. Upload to PyPI: `twine upload dist/*`
-6. Tag release: `git tag v0.x.0 && git push --tags`
+2. Sync versioned files: `python scripts/sync_versions.py`
+3. Update CHANGELOG in `README.md`
+4. Run full test suite: `pytest`
+5. Build: `python -m build`
+6. Upload to PyPI: `twine upload dist/*`
+7. Tag release: `git tag v0.x.0 && git push --tags`
 
 ## Related Documentation
 

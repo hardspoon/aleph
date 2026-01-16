@@ -32,6 +32,6 @@ ENV/
 .cursor/
 texput.log
 
-# Aleph sessions (large, per-user)
-.aleph/sessions/
+# Aleph local workspace (sessions, per-user)
+.aleph/
 tmp/
