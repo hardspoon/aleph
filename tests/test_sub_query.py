@@ -8,7 +8,14 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
-from aleph.sub_query import SubQueryConfig, detect_backend, has_api_credentials
+from aleph.sub_query import (
+    SubQueryConfig,
+    detect_backend,
+    has_api_credentials,
+    DEFAULT_API_KEY_ENV,
+    DEFAULT_API_BASE_URL_ENV,
+    DEFAULT_API_MODEL_ENV,
+)
 from aleph.sub_query.cli_backend import run_cli_sub_query, CLI_BACKENDS
 from aleph.sub_query.api_backend import run_api_sub_query
 
@@ -19,20 +26,20 @@ class TestSubQueryConfig:
     def test_default_config(self):
         config = SubQueryConfig()
         assert config.backend == "auto"
-        assert config.api_model == "mimo-v2-flash"
-        assert config.api_key_env == "MIMO_API_KEY"
-        assert config.api_base_url_env == "OPENAI_BASE_URL"
         assert config.max_context_chars == 100_000
+        assert config.api_key_env == DEFAULT_API_KEY_ENV
+        assert config.api_base_url_env == DEFAULT_API_BASE_URL_ENV
+        assert config.api_model_env == DEFAULT_API_MODEL_ENV
 
     def test_custom_config(self):
         config = SubQueryConfig(
             backend="api",
-            api_model="gpt-4o-mini",
             max_context_chars=50_000,
+            api_model="gpt-4o",
         )
         assert config.backend == "api"
-        assert config.api_model == "gpt-4o-mini"
         assert config.max_context_chars == 50_000
+        assert config.api_model == "gpt-4o"
 
 
 class TestDetectBackend:
@@ -47,41 +54,31 @@ class TestDetectBackend:
     6. API fallback (will error with helpful message)
     """
 
-    def test_detect_backend_api_preferred_when_credentials_available(self):
-        """API should be preferred when credentials are set, even if CLI is available."""
-        with patch.dict(os.environ, {"MIMO_API_KEY": "test-key"}):
+    def test_detect_backend_api_preferred_with_aleph_key(self):
+        """API should be preferred when ALEPH_SUB_QUERY_API_KEY is set."""
+        with patch.dict(os.environ, {"ALEPH_SUB_QUERY_API_KEY": "test-key"}, clear=True):
             with patch("aleph.sub_query.shutil.which") as mock_which:
                 mock_which.side_effect = lambda x: "/usr/bin/claude" if x == "claude" else None
                 assert detect_backend() == "api"
 
-    def test_detect_backend_openai_key_also_works(self):
-        """OPENAI_API_KEY should also trigger API preference."""
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False):
-            # Clear MIMO_API_KEY if set
-            env = dict(os.environ)
-            env.pop("MIMO_API_KEY", None)
-            env["OPENAI_API_KEY"] = "test-key"
-            with patch.dict(os.environ, env, clear=True):
-                with patch("aleph.sub_query.shutil.which") as mock_which:
-                    mock_which.side_effect = lambda x: "/usr/bin/claude" if x == "claude" else None
-                    assert detect_backend() == "api"
+    def test_detect_backend_api_preferred_with_openai_key(self):
+        """API should be preferred when OPENAI_API_KEY is set (fallback)."""
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True):
+            with patch("aleph.sub_query.shutil.which") as mock_which:
+                mock_which.side_effect = lambda x: "/usr/bin/claude" if x == "claude" else None
+                assert detect_backend() == "api"
 
     def test_detect_backend_explicit_override(self):
         """ALEPH_SUB_QUERY_BACKEND should override all other detection."""
-        with patch.dict(os.environ, {"ALEPH_SUB_QUERY_BACKEND": "codex", "MIMO_API_KEY": "key"}):
+        with patch.dict(os.environ, {"ALEPH_SUB_QUERY_BACKEND": "codex", "ALEPH_SUB_QUERY_API_KEY": "key"}, clear=True):
             with patch("aleph.sub_query.shutil.which") as mock_which:
                 mock_which.return_value = "/usr/bin/something"
                 assert detect_backend() == "codex"
 
     def test_detect_backend_explicit_override_api(self):
         """ALEPH_SUB_QUERY_BACKEND=api should force API even without credentials."""
-        with patch.dict(os.environ, {"ALEPH_SUB_QUERY_BACKEND": "api"}, clear=False):
-            env = dict(os.environ)
-            env.pop("MIMO_API_KEY", None)
-            env.pop("OPENAI_API_KEY", None)
-            env["ALEPH_SUB_QUERY_BACKEND"] = "api"
-            with patch.dict(os.environ, env, clear=True):
-                assert detect_backend() == "api"
+        with patch.dict(os.environ, {"ALEPH_SUB_QUERY_BACKEND": "api"}, clear=True):
+            assert detect_backend() == "api"
 
     def test_detect_backend_claude_when_no_api_credentials(self):
         """Claude CLI should be used when no API credentials are available."""
@@ -113,7 +110,7 @@ class TestDetectBackend:
 
     def test_detect_backend_model_override_implies_api(self):
         """ALEPH_SUB_QUERY_MODEL should prefer API when credentials available."""
-        with patch.dict(os.environ, {"ALEPH_SUB_QUERY_MODEL": "gpt-4o", "OPENAI_API_KEY": "key"}):
+        with patch.dict(os.environ, {"ALEPH_SUB_QUERY_MODEL": "gpt-5.2-codex", "OPENAI_API_KEY": "key"}, clear=True):
             with patch("aleph.sub_query.shutil.which") as mock_which:
                 mock_which.side_effect = lambda x: "/usr/bin/claude" if x == "claude" else None
                 assert detect_backend() == "api"
@@ -122,15 +119,18 @@ class TestDetectBackend:
 class TestHasApiCredentials:
     """Tests for API credential detection."""
 
-    def test_has_credentials(self):
-        with patch.dict(os.environ, {"MIMO_API_KEY": "test-key"}):
+    def test_has_aleph_credentials(self):
+        """ALEPH_SUB_QUERY_API_KEY should be detected."""
+        with patch.dict(os.environ, {"ALEPH_SUB_QUERY_API_KEY": "test-key"}, clear=True):
+            assert has_api_credentials() is True
+
+    def test_has_openai_credentials_fallback(self):
+        """OPENAI_API_KEY should be detected as fallback."""
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True):
             assert has_api_credentials() is True
 
     def test_no_credentials(self):
         with patch.dict(os.environ, {}, clear=True):
-            # Remove both API keys if they exist
-            os.environ.pop("MIMO_API_KEY", None)
-            os.environ.pop("OPENAI_API_KEY", None)
             assert has_api_credentials() is False
 
 
@@ -201,23 +201,34 @@ class TestApiBackend:
 
     @pytest.mark.asyncio
     async def test_api_no_key(self):
+        """Should error without API key."""
         with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("OPENAI_API_KEY", None)
-            success, output = await run_api_sub_query(
-                prompt="test",
-            )
+            success, output = await run_api_sub_query(prompt="test")
             assert success is False
-            assert "API key not found" in output
+            assert "No API key found" in output
+
+    @pytest.mark.asyncio
+    async def test_api_no_model(self):
+        """Should error without model configured."""
+        with patch.dict(os.environ, {"ALEPH_SUB_QUERY_API_KEY": "test-key"}, clear=True):
+            success, output = await run_api_sub_query(prompt="test")
+            assert success is False
+            assert "No model configured" in output
 
     @pytest.mark.asyncio
     async def test_api_success(self):
+        """Should succeed with key and model."""
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "choices": [{"message": {"content": "API response"}}]
         }
 
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "OPENAI_BASE_URL": "https://api.test.com/v1"}):
+        with patch.dict(
+            os.environ,
+            {"ALEPH_SUB_QUERY_API_KEY": "test-key", "ALEPH_SUB_QUERY_MODEL": "gpt-5.2-codex"},
+            clear=True,
+        ):
             with patch("httpx.AsyncClient") as mock_client:
                 mock_instance = AsyncMock()
                 mock_instance.post = AsyncMock(return_value=mock_response)
@@ -225,11 +236,34 @@ class TestApiBackend:
                 mock_instance.__aexit__ = AsyncMock(return_value=None)
                 mock_client.return_value = mock_instance
 
-                success, output = await run_api_sub_query(
-                    prompt="test prompt",
-                )
+                success, output = await run_api_sub_query(prompt="test prompt")
                 assert success is True
                 assert output == "API response"
+
+    @pytest.mark.asyncio
+    async def test_api_openai_fallback(self):
+        """Should work with OPENAI_API_KEY fallback."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "OpenAI response"}}]
+        }
+
+        with patch.dict(
+            os.environ,
+            {"OPENAI_API_KEY": "sk-test", "ALEPH_SUB_QUERY_MODEL": "gpt-5.2-codex"},
+            clear=True,
+        ):
+            with patch("httpx.AsyncClient") as mock_client:
+                mock_instance = AsyncMock()
+                mock_instance.post = AsyncMock(return_value=mock_response)
+                mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+                mock_instance.__aexit__ = AsyncMock(return_value=None)
+                mock_client.return_value = mock_instance
+
+                success, output = await run_api_sub_query(prompt="test prompt")
+                assert success is True
+                assert output == "OpenAI response"
 
     @pytest.mark.asyncio
     async def test_api_error_response(self):
@@ -238,7 +272,11 @@ class TestApiBackend:
         mock_response.text = "Internal Server Error"
         mock_response.json.return_value = {"error": {"message": "Server error"}}
 
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
+        with patch.dict(
+            os.environ,
+            {"ALEPH_SUB_QUERY_API_KEY": "test-key", "ALEPH_SUB_QUERY_MODEL": "gpt-5.2-codex"},
+            clear=True,
+        ):
             with patch("httpx.AsyncClient") as mock_client:
                 mock_instance = AsyncMock()
                 mock_instance.post = AsyncMock(return_value=mock_response)
@@ -258,7 +296,11 @@ class TestApiBackend:
             "choices": [{"message": {"content": "Response"}}]
         }
 
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
+        with patch.dict(
+            os.environ,
+            {"ALEPH_SUB_QUERY_API_KEY": "test-key", "ALEPH_SUB_QUERY_MODEL": "gpt-5.2-codex"},
+            clear=True,
+        ):
             with patch("httpx.AsyncClient") as mock_client:
                 mock_instance = AsyncMock()
                 mock_instance.post = AsyncMock(return_value=mock_response)
@@ -277,6 +319,71 @@ class TestApiBackend:
                 payload = call_args.kwargs.get("json", call_args.args[1] if len(call_args.args) > 1 else {})
                 messages = payload.get("messages", [])
                 assert any(m.get("role") == "system" for m in messages)
+
+    @pytest.mark.asyncio
+    async def test_api_model_override_param(self):
+        """Explicit model parameter should override env var."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "Response"}}]
+        }
+
+        with patch.dict(
+            os.environ,
+            {"ALEPH_SUB_QUERY_API_KEY": "test-key", "ALEPH_SUB_QUERY_MODEL": "env-model"},
+            clear=True,
+        ):
+            with patch("httpx.AsyncClient") as mock_client:
+                mock_instance = AsyncMock()
+                mock_instance.post = AsyncMock(return_value=mock_response)
+                mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+                mock_instance.__aexit__ = AsyncMock(return_value=None)
+                mock_client.return_value = mock_instance
+
+                success, output = await run_api_sub_query(
+                    prompt="test",
+                    model="explicit-model",  # Should override env
+                )
+                assert success is True
+
+                # Verify explicit model was used
+                call_args = mock_instance.post.call_args
+                payload = call_args.kwargs.get("json", call_args.args[1] if len(call_args.args) > 1 else {})
+                assert payload.get("model") == "explicit-model"
+
+    @pytest.mark.asyncio
+    async def test_api_custom_base_url(self):
+        """Custom base URL via env var should be used."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "Response"}}]
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "ALEPH_SUB_QUERY_API_KEY": "test-key",
+                "ALEPH_SUB_QUERY_MODEL": "llama-3.1",
+                "ALEPH_SUB_QUERY_URL": "https://api.groq.com/openai/v1",
+            },
+            clear=True,
+        ):
+            with patch("httpx.AsyncClient") as mock_client:
+                mock_instance = AsyncMock()
+                mock_instance.post = AsyncMock(return_value=mock_response)
+                mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+                mock_instance.__aexit__ = AsyncMock(return_value=None)
+                mock_client.return_value = mock_instance
+
+                success, output = await run_api_sub_query(prompt="test")
+                assert success is True
+
+                # Verify correct URL was called
+                call_args = mock_instance.post.call_args
+                url = call_args.args[0] if call_args.args else call_args.kwargs.get("url")
+                assert "groq.com" in url
 
 
 class TestCliBackends:

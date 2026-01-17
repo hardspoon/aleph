@@ -142,24 +142,53 @@ These parameters apply to `aleph`:
 
 ## Sub-query backends
 
-`sub_query` can use an API backend (OpenAI-compatible) or a local CLI backend. When `ALEPH_SUB_QUERY_BACKEND` is `auto` (default), Aleph chooses the first available backend:
+`sub_query` can use an API backend or a local CLI backend. When `ALEPH_SUB_QUERY_BACKEND` is `auto` (default), Aleph chooses the first available backend:
 
-1. **API** - if `MIMO_API_KEY` or `OPENAI_API_KEY` is available
+1. **API** - if API credentials are available
 2. **claude CLI** - if installed
 3. **codex CLI** - if installed
 4. **aider CLI** - if installed
 
-Quick setup:
+### API Configuration
 
+The API backend uses **OpenAI-compatible endpoints only**. Configure with these environment variables:
+
+| Variable | Fallback | Description |
+|----------|----------|-------------|
+| `ALEPH_SUB_QUERY_API_KEY` | `OPENAI_API_KEY` | API key |
+| `ALEPH_SUB_QUERY_URL` | `OPENAI_BASE_URL` | Base URL (default: `https://api.openai.com/v1`) |
+| `ALEPH_SUB_QUERY_MODEL` | - | Model name (**required**) |
+
+### Quick Setup Examples
+
+**OpenAI:**
 ```bash
-export ALEPH_SUB_QUERY_BACKEND=auto
-export ALEPH_SUB_QUERY_MODEL=mimo-v2-flash
-export MIMO_API_KEY=your_key
-
-# Or use any OpenAI-compatible provider:
-export OPENAI_API_KEY=your_key
-export OPENAI_BASE_URL=https://api.xiaomimimo.com/v1
+export ALEPH_SUB_QUERY_API_KEY=sk-...
+export ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
 ```
+
+**Groq (fast inference):**
+```bash
+export ALEPH_SUB_QUERY_API_KEY=gsk_...
+export ALEPH_SUB_QUERY_URL=https://api.groq.com/openai/v1
+export ALEPH_SUB_QUERY_MODEL=llama-3.3-70b-versatile
+```
+
+**Local LLM (Ollama, LM Studio, etc.):**
+```bash
+export ALEPH_SUB_QUERY_API_KEY=ollama  # Any non-empty value works
+export ALEPH_SUB_QUERY_URL=http://localhost:11434/v1
+export ALEPH_SUB_QUERY_MODEL=llama3.2
+```
+
+### Configuration Options
+
+| Environment Variable | Description |
+|---------------------|-------------|
+| `ALEPH_SUB_QUERY_BACKEND` | Force backend: `api`, `claude`, `codex`, `aider` |
+| `ALEPH_SUB_QUERY_API_KEY` | API key (fallback: `OPENAI_API_KEY`) |
+| `ALEPH_SUB_QUERY_URL` | API base URL (fallback: `OPENAI_BASE_URL`) |
+| `ALEPH_SUB_QUERY_MODEL` | Model name (required for API backend) |
 
 > **Note:** Some MCP clients don't reliably pass `env` vars from their config to the server process. If `sub_query` reports "API key not found" despite your client's MCP settings, add the exports to your shell profile (`~/.zshrc` or `~/.bashrc`) and restart your terminal/client.
 
@@ -472,10 +501,14 @@ python3 -m aleph.mcp.server --help
 
 **Solution:** Add credentials to your shell profile:
 ```bash
-# For bash/zsh
-export MIMO_API_KEY=...           # or OPENAI_API_KEY
-export OPENAI_BASE_URL=https://api.xiaomimimo.com/v1
-export ALEPH_SUB_QUERY_MODEL=mimo-v2-flash
+# For bash/zsh:
+export ALEPH_SUB_QUERY_API_KEY=sk-...
+export ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
+
+# Or for other OpenAI-compatible providers:
+export ALEPH_SUB_QUERY_API_KEY=your_key
+export ALEPH_SUB_QUERY_URL=https://api.your-provider.com/v1
+export ALEPH_SUB_QUERY_MODEL=your-model-name
 ```
 
 Then restart your terminal/MCP client.

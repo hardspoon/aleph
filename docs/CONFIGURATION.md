@@ -7,25 +7,24 @@ This guide covers all configuration options for Aleph, including environment var
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `ALEPH_SUB_QUERY_BACKEND` | Force sub-query backend | `auto` |
-| `ALEPH_SUB_QUERY_MODEL` | Model for API backend | `mimo-v2-flash` |
-| `MIMO_API_KEY` | Mimo API key | — |
-| `OPENAI_API_KEY` | OpenAI-compatible API key | — |
-| `OPENAI_BASE_URL` | API endpoint | `https://api.xiaomimimo.com/v1` |
+| `ALEPH_SUB_QUERY_API_KEY` | API key (fallback: `OPENAI_API_KEY`) | -- |
+| `ALEPH_SUB_QUERY_URL` | API base URL (fallback: `OPENAI_BASE_URL`) | `https://api.openai.com/v1` |
+| `ALEPH_SUB_QUERY_MODEL` | Model name (required for API) | -- |
 | `ALEPH_MAX_ITERATIONS` | Maximum iterations per session | `100` |
 | `ALEPH_MAX_COST` | Maximum cost in USD | `1.0` |
 
 ## Sub-Query Configuration
 
-The `sub_query` tool spawns independent sub-agents for recursive reasoning. You can configure which backend it uses.
+The `sub_query` tool spawns independent sub-agents for recursive reasoning. It uses **OpenAI-compatible APIs only**.
 
 ### Backend Priority (auto mode)
 
 When `ALEPH_SUB_QUERY_BACKEND` is not set or set to `auto`:
 
-1. **API** — if `MIMO_API_KEY` or `OPENAI_API_KEY` is available
-2. **claude CLI** — if installed (uses Claude Code subscription)
-3. **codex CLI** — if installed (uses OpenAI subscription)
-4. **aider CLI** — if installed
+1. **API** -- if any API credentials are available
+2. **claude CLI** -- if installed (uses Claude Code subscription)
+3. **codex CLI** -- if installed (uses OpenAI subscription)
+4. **aider CLI** -- if installed
 
 ### Force a Specific Backend
 
@@ -45,33 +44,53 @@ export ALEPH_SUB_QUERY_BACKEND=aider
 
 ### API Backend Configuration
 
-The API backend uses OpenAI-compatible endpoints. Default is Mimo Flash V2 (free until Jan 20, 2026).
+The API backend supports any **OpenAI-compatible** endpoint. Configure with these environment variables:
+
+| Variable | Purpose | Fallback |
+|----------|---------|----------|
+| `ALEPH_SUB_QUERY_API_KEY` | API key | `OPENAI_API_KEY` |
+| `ALEPH_SUB_QUERY_URL` | Base URL | `OPENAI_BASE_URL` or `https://api.openai.com/v1` |
+| `ALEPH_SUB_QUERY_MODEL` | Model name | (required) |
+
+**Examples:**
 
 ```bash
-# Mimo Flash V2 (default)
-export MIMO_API_KEY=your_mimo_key
-export OPENAI_BASE_URL=https://api.xiaomimimo.com/v1
-export ALEPH_SUB_QUERY_MODEL=mimo-v2-flash
-
 # OpenAI
-export OPENAI_API_KEY=your_openai_key
-export OPENAI_BASE_URL=https://api.openai.com/v1
-export ALEPH_SUB_QUERY_MODEL=gpt-4o-mini
+export ALEPH_SUB_QUERY_API_KEY=sk-...
+export ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
 
-# Groq
-export OPENAI_API_KEY=your_groq_key
-export OPENAI_BASE_URL=https://api.groq.com/openai/v1
-export ALEPH_SUB_QUERY_MODEL=llama-3.1-70b-versatile
+# Groq (fast inference)
+export ALEPH_SUB_QUERY_API_KEY=gsk_...
+export ALEPH_SUB_QUERY_URL=https://api.groq.com/openai/v1
+export ALEPH_SUB_QUERY_MODEL=llama-3.3-70b-versatile
 
 # Together AI
-export OPENAI_API_KEY=your_together_key
-export OPENAI_BASE_URL=https://api.together.xyz/v1
+export ALEPH_SUB_QUERY_API_KEY=...
+export ALEPH_SUB_QUERY_URL=https://api.together.xyz/v1
 export ALEPH_SUB_QUERY_MODEL=meta-llama/Llama-3-70b-chat-hf
 
-# Local (Ollama)
-export OPENAI_API_KEY=ollama  # any non-empty value
-export OPENAI_BASE_URL=http://localhost:11434/v1
-export ALEPH_SUB_QUERY_MODEL=llama3.1
+# DeepSeek
+export ALEPH_SUB_QUERY_API_KEY=...
+export ALEPH_SUB_QUERY_URL=https://api.deepseek.com/v1
+export ALEPH_SUB_QUERY_MODEL=deepseek-chat
+
+# Ollama (local)
+export ALEPH_SUB_QUERY_API_KEY=ollama  # any non-empty value
+export ALEPH_SUB_QUERY_URL=http://localhost:11434/v1
+export ALEPH_SUB_QUERY_MODEL=llama3.2
+
+# LM Studio (local)
+export ALEPH_SUB_QUERY_API_KEY=lm-studio  # any non-empty value
+export ALEPH_SUB_QUERY_URL=http://localhost:1234/v1
+export ALEPH_SUB_QUERY_MODEL=local-model
+```
+
+**Using OPENAI_* fallbacks:**
+
+If you already have `OPENAI_API_KEY` and `OPENAI_BASE_URL` set, you only need to set the model:
+
+```bash
+export ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
 ```
 
 ### CLI Backend Notes
@@ -126,23 +145,10 @@ aleph --tool-docs full
   "mcpServers": {
     "aleph": {
       "command": "aleph",
-      "args": ["--enable-actions", "--tool-docs", "concise"]
-    }
-  }
-}
-```
-
-**With environment variables:**
-
-```json
-{
-  "mcpServers": {
-    "aleph": {
-      "command": "aleph",
       "args": ["--enable-actions", "--tool-docs", "concise"],
       "env": {
-        "MIMO_API_KEY": "your_key",
-        "OPENAI_BASE_URL": "https://api.xiaomimimo.com/v1"
+        "ALEPH_SUB_QUERY_API_KEY": "${ALEPH_SUB_QUERY_API_KEY}",
+        "ALEPH_SUB_QUERY_MODEL": "${ALEPH_SUB_QUERY_MODEL}"
       }
     }
   }
@@ -228,7 +234,7 @@ datasets:
     path: ./tests
     type: directory
 
-model: mimo-v2-flash
+model: gpt-5.2-codex  # or any OpenAI-compatible model
 max_iterations: 50
 timeout_seconds: 600
 max_tokens: 500000
@@ -259,12 +265,14 @@ result = runner.finalize(answer="Found 3 issues", success=True)
 Create a `.env` file in your project root:
 
 ```bash
-# Sub-query API configuration
-MIMO_API_KEY=your_mimo_key
-OPENAI_BASE_URL=https://api.xiaomimimo.com/v1
-ALEPH_SUB_QUERY_MODEL=mimo-v2-flash
+# Sub-query API configuration (OpenAI-compatible)
+ALEPH_SUB_QUERY_API_KEY=sk-...
+ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
 
-# Or force CLI backend
+# Optional: custom endpoint
+# ALEPH_SUB_QUERY_URL=https://api.groq.com/openai/v1
+
+# Or use CLI backend (no API key needed)
 # ALEPH_SUB_QUERY_BACKEND=claude
 
 # Resource limits
@@ -284,13 +292,14 @@ Load with your shell or tool of choice (e.g., `source .env`, `dotenv`, or IDE in
    which claude codex aider
 
    # Are API credentials set?
-   echo $MIMO_API_KEY $OPENAI_API_KEY
+   echo $ALEPH_SUB_QUERY_API_KEY $OPENAI_API_KEY
    ```
 
 2. Force a specific backend to test:
    ```bash
    export ALEPH_SUB_QUERY_BACKEND=api
-   export MIMO_API_KEY=your_key
+   export ALEPH_SUB_QUERY_API_KEY=sk-...
+   export ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
    ```
 
 3. Check logs for errors in the MCP client.
@@ -318,6 +327,6 @@ aleph --enable-actions --tool-docs concise
 
 ## See Also
 
-- [README.md](../README.md) — Overview and quick start
-- [DEVELOPMENT.md](../DEVELOPMENT.md) — Architecture and development
-- [ALEPH.md](../ALEPH.md) — AI skill guide
+- [README.md](../README.md) -- Overview and quick start
+- [DEVELOPMENT.md](../DEVELOPMENT.md) -- Architecture and development
+- [ALEPH.md](../ALEPH.md) -- AI skill guide

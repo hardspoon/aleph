@@ -90,14 +90,14 @@ Enables RLM-style recursive reasoning:
 ```python
 # Backend detection priority (when backend="auto"):
 # 1. ALEPH_SUB_QUERY_BACKEND env var (explicit override)
-# 2. API (if MIMO_API_KEY or OPENAI_API_KEY set)
+# 2. API (if ALEPH_SUB_QUERY_API_KEY or OPENAI_API_KEY set)
 # 3. claude CLI (if installed)
 # 4. codex CLI (if installed)
 # 5. aider CLI (if installed)
 ```
 
 **CLI backend:** Spawns subprocess, passes prompt via stdin or temp file
-**API backend:** OpenAI-compatible HTTP calls (default: Mimo Flash V2)
+**API backend:** OpenAI-compatible HTTP calls (any provider with `/v1/chat/completions`)
 
 ### Budget System (`types.py`)
 
@@ -234,11 +234,9 @@ HELPER_FUNCTIONS = {
 | Variable | Purpose |
 |----------|---------|
 | `ALEPH_SUB_QUERY_BACKEND` | Force sub-query backend: `api`, `claude`, `codex`, `aider` |
-| `ALEPH_SUB_QUERY_MODEL` | Model for API backend (default: `mimo-v2-flash`) |
-| `MIMO_API_KEY` | Mimo API key for sub-queries |
-| `OPENAI_API_KEY` | OpenAI-compatible API key |
-| `OPENAI_BASE_URL` | API endpoint (default: `https://api.xiaomimimo.com/v1`) |
-| `ANTHROPIC_API_KEY` | For Anthropic provider usage (non-MCP integrations) |
+| `ALEPH_SUB_QUERY_API_KEY` | API key (fallback: `OPENAI_API_KEY`) |
+| `ALEPH_SUB_QUERY_URL` | API base URL (fallback: `OPENAI_BASE_URL`) |
+| `ALEPH_SUB_QUERY_MODEL` | Model name (required for API backend) |
 | `ALEPH_MAX_ITERATIONS` | Iteration limit |
 | `ALEPH_MAX_COST` | Cost limit in USD |
 

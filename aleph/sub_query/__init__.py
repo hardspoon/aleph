@@ -4,8 +4,13 @@ This module enables Aleph to spawn sub-agents that can reason over context slice
 following the Recursive Language Model (RLM) paradigm.
 
 Backend priority (configurable via ALEPH_SUB_QUERY_BACKEND):
-1. API (if credentials available) - Mimo Flash V2 or any OpenAI-compatible API
+1. API (if credentials available) - OpenAI-compatible APIs only
 2. CLI backends (claude, codex, aider) - uses existing subscriptions
+
+Configuration via environment:
+- ALEPH_SUB_QUERY_API_KEY (or OPENAI_API_KEY fallback)
+- ALEPH_SUB_QUERY_URL (or OPENAI_BASE_URL fallback, default: https://api.openai.com/v1)
+- ALEPH_SUB_QUERY_MODEL (required)
 """
 
 from __future__ import annotations
@@ -15,10 +20,20 @@ import shutil
 from dataclasses import dataclass, field
 from typing import Literal
 
-__all__ = ["SubQueryConfig", "detect_backend", "DEFAULT_CONFIG", "has_api_credentials"]
+__all__ = [
+    "SubQueryConfig",
+    "detect_backend",
+    "DEFAULT_CONFIG",
+    "has_api_credentials",
+]
 
 
 BackendType = Literal["claude", "codex", "aider", "api", "auto"]
+
+DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_API_KEY_ENV = "ALEPH_SUB_QUERY_API_KEY"
+DEFAULT_API_BASE_URL_ENV = "ALEPH_SUB_QUERY_URL"
+DEFAULT_API_MODEL_ENV = "ALEPH_SUB_QUERY_MODEL"
 
 
 @dataclass
@@ -28,12 +43,12 @@ class SubQueryConfig:
     The backend priority can be configured via environment variables:
 
     - ALEPH_SUB_QUERY_BACKEND: Force a specific backend ("api", "claude", "codex", "aider")
-    - MIMO_API_KEY or OPENAI_API_KEY: Required for API backend
-    - OPENAI_BASE_URL: API endpoint (default: https://api.xiaomimimo.com/v1)
-    - ALEPH_SUB_QUERY_MODEL: Model name (default: mimo-v2-flash)
+    - ALEPH_SUB_QUERY_API_KEY: API key for OpenAI-compatible providers (fallback: OPENAI_API_KEY)
+    - ALEPH_SUB_QUERY_URL: Base URL for OpenAI-compatible APIs (fallback: OPENAI_BASE_URL)
+    - ALEPH_SUB_QUERY_MODEL: Model name (required)
 
     When backend="auto" (default), the priority is:
-    1. API - if MIMO_API_KEY or OPENAI_API_KEY is set
+    1. API - if API credentials are available
     2. claude CLI - if installed
     3. codex CLI - if installed
     4. aider CLI - if installed
@@ -42,41 +57,50 @@ class SubQueryConfig:
         backend: Which backend to use. "auto" prioritizes API, then CLI.
         cli_timeout_seconds: Timeout for CLI subprocess calls.
         cli_max_output_chars: Maximum output characters from CLI.
-        api_base_url_env: Environment variable for API base URL.
-        api_key_env: Environment variable for API key.
-        api_model: Model name for API calls.
+        api_timeout_seconds: Timeout for API calls.
+        api_key_env: Environment variable name for API key.
+        api_base_url_env: Environment variable name for API base URL.
+        api_model_env: Environment variable name for API model.
+        api_model: Explicit model override (if provided programmatically).
         max_context_chars: Truncate context slices longer than this.
         include_system_prompt: Whether to include a system prompt for sub-queries.
     """
+
     backend: BackendType = "auto"
 
     # CLI options
     cli_timeout_seconds: float = 120.0
     cli_max_output_chars: int = 50_000
 
-    # API options (preferred when credentials available)
-    # Default: Xiaomi MiMo Flash V2 (free public beta until Jan 20, 2026)
-    # Uses OpenAI-compatible API format at api.xiaomimimo.com
-    api_base_url_env: str = "OPENAI_BASE_URL"
-    api_key_env: str = "MIMO_API_KEY"  # Falls back to OPENAI_API_KEY
-    api_model: str = "mimo-v2-flash"
+    # API options
     api_timeout_seconds: float = 60.0
+    api_key_env: str = DEFAULT_API_KEY_ENV
+    api_base_url_env: str = DEFAULT_API_BASE_URL_ENV
+    api_model_env: str = DEFAULT_API_MODEL_ENV
+    api_model: str | None = None
 
     # Behavior
     max_context_chars: int = 100_000
     include_system_prompt: bool = True
 
     # System prompt for sub-queries
-    system_prompt: str = field(default="""You are a focused sub-agent analyzing a specific portion of a larger document.
+    system_prompt: str = field(
+        default="""You are a focused sub-agent analyzing a specific portion of a larger document.
 Your task is to answer the question based ONLY on the provided context.
 Be concise and precise. If the context doesn't contain enough information to answer, say so.
-Do not make up information not present in the context.""")
+Do not make up information not present in the context."""
+    )
+
+
+def _get_api_key(api_key_env: str) -> str | None:
+    """Return API key from explicit env var or OPENAI_API_KEY fallback."""
+    return os.environ.get(api_key_env) or os.environ.get("OPENAI_API_KEY")
 
 
 def has_api_credentials(config: SubQueryConfig | None = None) -> bool:
-    """Check if API credentials are available (MIMO_API_KEY or OPENAI_API_KEY)."""
+    """Check if API credentials are available for the sub-query backend."""
     cfg = config or DEFAULT_CONFIG
-    return bool(os.environ.get(cfg.api_key_env) or os.environ.get("OPENAI_API_KEY"))
+    return _get_api_key(cfg.api_key_env) is not None
 
 
 def detect_backend(config: SubQueryConfig | None = None) -> BackendType:
@@ -84,16 +108,11 @@ def detect_backend(config: SubQueryConfig | None = None) -> BackendType:
 
     Priority (API-first for reliability and configurability):
     1. Check ALEPH_SUB_QUERY_BACKEND env var for explicit override
-    2. api - if MIMO_API_KEY or OPENAI_API_KEY is set
+    2. api - if API credentials are available
     3. claude CLI - if installed
     4. codex CLI - if installed
     5. aider CLI - if installed
     6. api (fallback) - will error if no credentials, but gives helpful message
-
-    This priority order ensures:
-    - Users who configure API keys get consistent, predictable behavior
-    - IDE users (Cursor, Windsurf) can still use CLI tools seamlessly
-    - Clear error messages guide users to configure credentials
 
     Returns:
         The detected backend type.
@@ -105,10 +124,9 @@ def detect_backend(config: SubQueryConfig | None = None) -> BackendType:
     if explicit_backend in ("api", "claude", "codex", "aider"):
         return explicit_backend  # type: ignore
 
-    # Check for model override (implies API backend preference)
-    if os.environ.get("ALEPH_SUB_QUERY_MODEL"):
-        if has_api_credentials(cfg):
-            return "api"
+    # Prefer API if explicit model is set and credentials exist
+    if (cfg.api_model or os.environ.get(cfg.api_model_env)) and has_api_credentials(cfg):
+        return "api"
 
     # Priority 1: API if credentials are available
     if has_api_credentials(cfg):

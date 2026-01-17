@@ -1848,16 +1848,16 @@ class AlephMCPServerLocal:
             and returns its response.
 
             Backend priority (when backend="auto"):
-            1. API - if MIMO_API_KEY or OPENAI_API_KEY is set (most reliable)
+            1. API - if ALEPH_SUB_QUERY_API_KEY or OPENAI_API_KEY is set (most reliable)
             2. claude CLI - if installed
             3. codex CLI - if installed
             4. aider CLI - if installed
 
             Configure via environment:
             - ALEPH_SUB_QUERY_BACKEND: Force specific backend ("api", "claude", "codex", "aider")
-            - MIMO_API_KEY or OPENAI_API_KEY: API credentials
-            - OPENAI_BASE_URL: API endpoint (default: Mimo Flash V2)
-            - ALEPH_SUB_QUERY_MODEL: Model name (default: mimo-v2-flash)
+            - ALEPH_SUB_QUERY_API_KEY or OPENAI_API_KEY: API credentials
+            - ALEPH_SUB_QUERY_URL or OPENAI_BASE_URL: Custom endpoint for OpenAI-compatible APIs
+            - ALEPH_SUB_QUERY_MODEL: Model name (required)
 
             Args:
                 prompt: The question/task for the sub-agent
@@ -1913,6 +1913,7 @@ class AlephMCPServerLocal:
                         model=self.sub_query_config.api_model,
                         api_key_env=self.sub_query_config.api_key_env,
                         api_base_url_env=self.sub_query_config.api_base_url_env,
+                        api_model_env=self.sub_query_config.api_model_env,
                         timeout=self.sub_query_config.api_timeout_seconds,
                         system_prompt=self.sub_query_config.system_prompt if self.sub_query_config.include_system_prompt else None,
                     )

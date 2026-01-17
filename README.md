@@ -139,7 +139,7 @@ final = sub_query("Synthesize into a summary:", context_slice="\n\n".join(result
 
 When `ALEPH_SUB_QUERY_BACKEND` is `auto` (default), Aleph chooses the first available backend:
 
-1. **API** - if `MIMO_API_KEY` or `OPENAI_API_KEY` is available
+1. **API** - if API credentials are available
 2. **claude CLI** - if installed
 3. **codex CLI** - if installed
 4. **aider CLI** - if installed
@@ -147,13 +147,12 @@ When `ALEPH_SUB_QUERY_BACKEND` is `auto` (default), Aleph chooses the first avai
 Quick setup:
 
 ```bash
-export ALEPH_SUB_QUERY_BACKEND=auto
-export ALEPH_SUB_QUERY_MODEL=mimo-v2-flash
-export MIMO_API_KEY=your_key
+# OpenAI-compatible API (OpenAI, Groq, Together, local LLMs, etc.)
+export ALEPH_SUB_QUERY_API_KEY=sk-...
+export ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
 
-# Or use any OpenAI-compatible provider:
-export OPENAI_API_KEY=your_key
-export OPENAI_BASE_URL=https://api.xiaomimimo.com/v1
+# Optional: custom endpoint
+export ALEPH_SUB_QUERY_URL=https://api.your-provider.com/v1
 ```
 
 > **Note:** Some MCP clients don't reliably pass `env` vars from their config to the server process. If `sub_query` reports "API key not found" despite your client's MCP settings, add the exports to your shell profile (`~/.zshrc` or `~/.bashrc`) and restart your terminal/client.
