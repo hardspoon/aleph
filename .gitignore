@@ -43,3 +43,4 @@ firebase-debug.log
 # Research docs (local only)
 docs/*.pdf
 docs/*.txt
+docs/architecture/
