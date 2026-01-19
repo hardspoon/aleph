@@ -103,7 +103,7 @@ export ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
 **Codex CLI (`codex`):**
 - Requires OpenAI Codex CLI installed
 - Uses your existing OpenAI subscription
-- Spawns: `codex -q "prompt"`
+- Spawns: `codex exec --full-auto "prompt"`
 
 **Gemini CLI (`gemini`):**
 - Requires Gemini CLI installed: `npm install -g @google/gemini-cli`
@@ -239,6 +239,9 @@ ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
 # Resource limits
 ALEPH_MAX_ITERATIONS=100
 ALEPH_MAX_COST=1.0
+
+# MCP remote tool timeout (seconds)
+ALEPH_REMOTE_TOOL_TIMEOUT=120
 ```
 
 Load with your shell or tool of choice (e.g., `source .env`, `dotenv`, or IDE integration).

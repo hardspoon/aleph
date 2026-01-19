@@ -55,6 +55,22 @@ ToolDocsMode = Literal["concise", "full"]
 DEFAULT_TOOL_DOCS_MODE: ToolDocsMode = "concise"
 
 
+def _get_env_float(name: str, default: float) -> float:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+DEFAULT_REMOTE_TOOL_TIMEOUT_SECONDS = _get_env_float(
+    "ALEPH_REMOTE_TOOL_TIMEOUT",
+    120.0,
+)
+
+
 @dataclass
 class _Evidence:
     """Provenance tracking for reasoning conclusions."""
@@ -316,12 +332,8 @@ class AlephMCPServerLocal:
         handle.connected_at = datetime.now()
         return True, handle
 
-    async def _close_remote_server(self, server_id: str) -> tuple[bool, str]:
-        """Close a remote server connection and terminate the subprocess."""
-        if server_id not in self._remote_servers:
-            return False, f"Error: Remote server '{server_id}' not registered."
-
-        handle = self._remote_servers[server_id]
+    async def _reset_remote_server_handle(self, handle: _RemoteServerHandle) -> None:
+        """Close and clear a remote server handle without removing registration."""
         if handle._stack is not None:
             try:
                 await handle._stack.aclose()
@@ -329,6 +341,17 @@ class AlephMCPServerLocal:
                 handle._stack = None
                 handle.session = None
                 handle.connected_at = None
+        else:
+            handle.session = None
+            handle.connected_at = None
+
+    async def _close_remote_server(self, server_id: str) -> tuple[bool, str]:
+        """Close a remote server connection and terminate the subprocess."""
+        if server_id not in self._remote_servers:
+            return False, f"Error: Remote server '{server_id}' not registered."
+
+        handle = self._remote_servers[server_id]
+        await self._reset_remote_server_handle(handle)
         return True, f"Closed remote server '{server_id}'."
 
     async def _remote_list_tools(self, server_id: str) -> tuple[bool, Any]:
@@ -340,14 +363,23 @@ class AlephMCPServerLocal:
             result = await handle.session.list_tools()  # type: ignore[union-attr]
             return True, _to_jsonable(result)
         except Exception as e:
-            return False, f"Error: list_tools failed: {e}"
+            await self._reset_remote_server_handle(handle)
+            ok, res = await self._ensure_remote_server(server_id)
+            if not ok:
+                return False, f"Error: list_tools failed and reconnect failed: {res}"
+            handle = res  # type: ignore[assignment]
+            try:
+                result = await handle.session.list_tools()  # type: ignore[union-attr]
+                return True, _to_jsonable(result)
+            except Exception as e2:
+                return False, f"Error: list_tools failed after reconnect: {e2}"
 
     async def _remote_call_tool(
         self,
         server_id: str,
         tool: str,
         arguments: dict[str, Any] | None = None,
-        timeout_seconds: float | None = 30.0,
+        timeout_seconds: float | None = DEFAULT_REMOTE_TOOL_TIMEOUT_SECONDS,
     ) -> tuple[bool, Any]:
         ok, res = await self._ensure_remote_server(server_id)
         if not ok:
@@ -357,17 +389,31 @@ class AlephMCPServerLocal:
         if not self._remote_tool_allowed(handle, tool):
             return False, f"Error: Tool '{tool}' is not allowed for remote server '{server_id}'."
 
-        try:
-            from datetime import timedelta
+        from datetime import timedelta
 
-            read_timeout = timedelta(seconds=float(timeout_seconds or 30.0))
+        read_timeout = timedelta(
+            seconds=float(timeout_seconds or DEFAULT_REMOTE_TOOL_TIMEOUT_SECONDS)
+        )
+        try:
             result = await handle.session.call_tool(  # type: ignore[union-attr]
                 name=tool,
                 arguments=arguments or {},
                 read_timeout_seconds=read_timeout,
             )
         except Exception as e:
-            return False, f"Error: call_tool failed: {e}"
+            await self._reset_remote_server_handle(handle)
+            ok, res = await self._ensure_remote_server(server_id)
+            if not ok:
+                return False, f"Error: call_tool failed and reconnect failed: {res}"
+            handle = res  # type: ignore[assignment]
+            try:
+                result = await handle.session.call_tool(  # type: ignore[union-attr]
+                    name=tool,
+                    arguments=arguments or {},
+                    read_timeout_seconds=read_timeout,
+                )
+            except Exception as e2:
+                return False, f"Error: call_tool failed after reconnect: {e2}"
 
         result_jsonable = _to_jsonable(result)
 
@@ -2033,7 +2079,7 @@ class AlephMCPServerLocal:
             server_id: str,
             tool: str,
             arguments: dict[str, Any] | None = None,
-            timeout_seconds: float | None = 30.0,
+            timeout_seconds: float | None = DEFAULT_REMOTE_TOOL_TIMEOUT_SECONDS,
             confirm: bool = False,
             output: Literal["json", "markdown", "object"] = "markdown",
         ) -> str | dict[str, Any]:
@@ -2043,7 +2089,7 @@ class AlephMCPServerLocal:
                 server_id: Registered remote server ID
                 tool: Tool name
                 arguments: Tool arguments object
-                timeout_seconds: Tool call timeout (best-effort)
+                timeout_seconds: Tool call timeout (best-effort). Defaults to ALEPH_REMOTE_TOOL_TIMEOUT or 120s.
                 confirm: Required if actions are enabled
                 output: Output format
             """

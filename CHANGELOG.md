@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.7
+
+- Switched Codex CLI sub-queries to `codex exec --full-auto`, with stdin support for long prompts.
+- Added auto-reconnect for remote MCP servers and a configurable default timeout (`ALEPH_REMOTE_TOOL_TIMEOUT`).
+
 ## 0.5.6
 
 - Removed deprecated recipe workflow and aider backend references.

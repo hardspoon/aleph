@@ -76,8 +76,8 @@ async def _run_with_arg(
         # Claude Code CLI: -p for print mode (non-interactive), --dangerously-skip-permissions to bypass
         cmd = ["claude", "-p", prompt, "--dangerously-skip-permissions"]
     elif backend == "codex":
-        # OpenAI Codex CLI
-        cmd = ["codex", "-q", prompt]
+        # OpenAI Codex CLI (non-interactive)
+        cmd = ["codex", "exec", "--full-auto", prompt]
     elif backend == "gemini":
         # Google Gemini CLI: -p for prompt mode (non-interactive)
         cmd = ["gemini", "-p", prompt]
@@ -130,8 +130,9 @@ async def _run_with_tempfile(
             cmd = ["claude", "-p", "--dangerously-skip-permissions"]
             stdin_data = prompt.encode("utf-8")
         elif backend == "codex":
-            cmd = ["codex", "-q", f"@{temp_path}"]
-            stdin_data = None
+            # Codex reads prompt from stdin when "-" is passed
+            cmd = ["codex", "exec", "--full-auto", "-"]
+            stdin_data = prompt.encode("utf-8")
         elif backend == "gemini":
             # Gemini reads from stdin with -p flag
             cmd = ["gemini", "-p"]
