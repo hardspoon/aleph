@@ -6,7 +6,7 @@ Use this checklist to connect Aleph's MCP server to OpenAI clients that can laun
 
 Preferred path (auto-install):
 ```bash
-pip install aleph-rlm[mcp]
+pip install "aleph-rlm[mcp]"
 aleph-rlm install codex
 ```
 
@@ -24,7 +24,7 @@ Restart Codex CLI after changes.
 Codex skills live in `~/.codex/skills`. To install the `/aleph` skill from this repo:
 ```bash
 mkdir -p ~/.codex/skills/aleph
-cp /path/to/aleph/ALEPH.md ~/.codex/skills/aleph/SKILL.md
+cp /path/to/aleph/docs/prompts/aleph.md ~/.codex/skills/aleph/SKILL.md
 ```
 
 Restart Codex CLI after changes.
@@ -42,4 +42,4 @@ Notes:
 
 ## Troubleshooting
 
-- If `aleph` is not found, reinstall: `pip install aleph-rlm[mcp]`.
+- If `aleph` is not found, reinstall: `pip install "aleph-rlm[mcp]"`.

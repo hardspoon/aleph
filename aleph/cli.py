@@ -799,7 +799,7 @@ def doctor() -> bool:
         print_success("aleph is in PATH")
     else:
         print_error("aleph not found in PATH")
-        print_info("Try reinstalling: pip install aleph-rlm[mcp]")
+        print_info("Try reinstalling: pip install \"aleph-rlm[mcp]\"")
         all_ok = False
 
     # Check MCP dependency
@@ -809,7 +809,7 @@ def doctor() -> bool:
         print_success("MCP package is installed")
     except ImportError:
         print_error("MCP package not installed")
-        print_info("Install with: pip install aleph-rlm[mcp]")
+        print_info("Install with: pip install \"aleph-rlm[mcp]\"")
         all_ok = False
 
     # Check each client
@@ -858,7 +858,7 @@ def doctor() -> bool:
     except RuntimeError as e:
         if "mcp" in str(e).lower():
             print_error(f"MCP dependency issue: {e}")
-            print_info("Install with: pip install aleph-rlm[mcp]")
+            print_info("Install with: pip install \"aleph-rlm[mcp]\"")
         else:
             print_error(f"Server error: {e}")
         all_ok = False

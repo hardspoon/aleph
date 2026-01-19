@@ -7,7 +7,7 @@ Use this prompt with Claude Code (or any AI assistant with file access) to insta
 ## Prompt
 
 ```
-I need you to install and configure Aleph (an MCP server for recursive LLM reasoning over documents) across all my AI development environments.
+I need you to install and configure Aleph (an MCP server for recursive LLM reasoning over large local data) across all my AI development environments.
 
 **Target environments:**
 1. Claude Code (CLI) - via ~/.claude/claude_desktop_config.json or similar
@@ -21,7 +21,7 @@ I need you to install and configure Aleph (an MCP server for recursive LLM reaso
 
 1. First, check if aleph-rlm is installed:
    ```bash
-   pip show aleph-rlm || pip install aleph-rlm[mcp]
+   pip show aleph-rlm || pip install "aleph-rlm[mcp]"
    ```
 
 2. Run the automatic installer and see what it detects:
@@ -37,7 +37,7 @@ I need you to install and configure Aleph (an MCP server for recursive LLM reaso
       "mcpServers": {
         "aleph": {
           "command": "aleph",
-          "args": ["--enable-actions", "--tool-docs", "concise"]
+          "args": ["--enable-actions", "--tool-docs", "concise", "--workspace-mode", "git"]
         }
       }
     }
@@ -47,7 +47,7 @@ I need you to install and configure Aleph (an MCP server for recursive LLM reaso
    ```toml
    [mcp_servers.aleph]
    command = "aleph"
-   args = ["--enable-actions", "--tool-docs", "concise"]
+   args = ["--enable-actions", "--tool-docs", "concise", "--workspace-mode", "git"]
    ```
 
    **Gemini CLI** (~/.gemini/mcp.json):
@@ -56,7 +56,7 @@ I need you to install and configure Aleph (an MCP server for recursive LLM reaso
      "mcpServers": {
        "aleph": {
          "command": "aleph",
-         "args": ["--enable-actions", "--tool-docs", "concise"]
+         "args": ["--enable-actions", "--tool-docs", "concise", "--workspace-mode", "git"]
        }
      }
    }
@@ -66,19 +66,20 @@ I need you to install and configure Aleph (an MCP server for recursive LLM reaso
 
    ```bash
    mkdir -p ~/.codex/skills/aleph
-   cp /path/to/aleph/ALEPH.md ~/.codex/skills/aleph/SKILL.md
+   cp /path/to/aleph/docs/prompts/aleph.md ~/.codex/skills/aleph/SKILL.md
    ```
 
-5. Set up the Mimo API key for sub_query functionality (needed for non-CLI environments like Claude Desktop):
+5. Configure `sub_query` (optional):
 
-   Create or update ~/.zshrc (or ~/.bashrc):
+   If you want the API backend, set environment variables:
    ```bash
-   # Aleph sub-query API (Xiaomi MiMo - free until Jan 20, 2026)
-   export MIMO_API_KEY="<USER_NEEDS_TO_FILL_THIS>"
-   export OPENAI_BASE_URL="https://api.xiaomimimo.com/v1"
+   export ALEPH_SUB_QUERY_API_KEY=sk-...
+   export ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
+   # Optional: OpenAI-compatible base URL (Groq, Together, local LLMs, etc.)
+   export ALEPH_SUB_QUERY_URL=https://api.your-provider.com/v1
    ```
 
-   Get a free API key at: https://xiaomimimo.com
+   CLI backends (`claude`, `codex`, `gemini`) do not require an API key. Aleph will auto-detect the first available backend unless you set `ALEPH_SUB_QUERY_BACKEND`.
 
 6. Verify installation:
    ```bash
@@ -89,9 +90,10 @@ I need you to install and configure Aleph (an MCP server for recursive LLM reaso
 
 **Important notes:**
 - The `--enable-actions` flag allows file read/write and command execution
-- In CLI environments (Claude Code, Codex), sub_query will auto-detect and use the CLI itself - no API key needed
-- In GUI environments (Claude Desktop), sub_query needs the Mimo API key
+- In CLI environments (Claude Code, Codex, Gemini), `sub_query` can use the local CLI backend - no API key needed
 - The installer should handle most of this automatically, but verify each environment works
+- For per-project scoping, set `--workspace-root /absolute/path/to/project` instead of `--workspace-mode git`. See MCP_SETUP.md for details.
+- Some MCP clients don't reliably pass `env` vars from config to the server process. If `sub_query` reports missing credentials, add exports to your shell profile (~/.zshrc or ~/.bashrc) and restart the client.
 
 Please proceed step by step and report what you find in each environment.
 ```
@@ -102,5 +104,5 @@ Please proceed step by step and report what you find in each environment.
 
 - Installs `aleph-rlm` Python package
 - Configures MCP server in all supported AI coding environments
-- Sets up Mimo API credentials for `sub_query` functionality
+- Optionally sets up OpenAI-compatible API credentials for `sub_query`
 - Enables action tools (file I/O, commands) where appropriate

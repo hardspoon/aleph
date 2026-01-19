@@ -242,7 +242,7 @@ HELPER_FUNCTIONS = {
 
 1. Update version in `pyproject.toml`
 2. Sync versioned files: `python scripts/sync_versions.py`
-3. Update CHANGELOG in `README.md`
+3. Update `CHANGELOG.md`
 4. Run full test suite: `pytest`
 5. Build: `python -m build`
 6. Upload to PyPI: `twine upload dist/*`
@@ -250,5 +250,6 @@ HELPER_FUNCTIONS = {
 
 ## Related Documentation
 
-- [ALEPH.md](ALEPH.md) — AI skill guide for using Aleph
+- [docs/prompts/aleph.md](docs/prompts/aleph.md) — workflow prompt + tool reference
 - [README.md](README.md) — User documentation
+- [CHANGELOG.md](CHANGELOG.md) — release notes

@@ -1,11 +1,11 @@
 ---
 name: aleph
-description: /aleph - Become unbounded. Infinite context, recursive reasoning, persistent intelligence.
+description: /aleph - External memory workflow for large local data.
 ---
 
-# /aleph - Unbounded Cognition
+# /aleph - External Memory Workflow
 
-TL;DR: Load any size document into external memory, search it, reason in loops, and persist across sessions.
+TL;DR: Load large data into external memory, search it, reason in loops, and persist across sessions.
 
 ## Quick Start
 
@@ -36,15 +36,15 @@ Note: tool names may appear as `mcp__aleph__load_context` in your MCP client.
 
 ## Core Patterns
 
-### 1) Analyze a Document
+### 1) Analyze Data
 ```
-load_context(content=document_text, context_id="doc")
+load_context(content=data_text, context_id="doc")
 search_context(pattern="important|keyword|pattern", context_id="doc")
 peek_context(start=100, end=150, unit="lines", context_id="doc")
 finalize(answer="Analysis complete: ...", confidence="high", context_id="doc")
 ```
 
-### 2) Compare Two Documents
+### 2) Compare Two Contexts
 ```
 load_context(content=doc1, context_id="v1")
 load_context(content=doc2, context_id="v2")

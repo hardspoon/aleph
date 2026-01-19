@@ -274,7 +274,7 @@ class AlephMCPServerLocal:
             from mcp.server.fastmcp import FastMCP
         except Exception as e:
             raise RuntimeError(
-                "MCP support requires the `mcp` package. Install with `pip install aleph-rlm[mcp]`."
+                "MCP support requires the `mcp` package. Install with `pip install \"aleph-rlm[mcp]\"`."
             ) from e
 
         self.server = FastMCP("aleph-local")

@@ -290,4 +290,4 @@ aleph --enable-actions --tool-docs concise
 
 - [README.md](../README.md) -- Overview and quick start
 - [DEVELOPMENT.md](../DEVELOPMENT.md) -- Architecture and development
-- [ALEPH.md](../ALEPH.md) -- AI skill guide
+- [docs/prompts/aleph.md](../docs/prompts/aleph.md) -- Workflow prompt + tool reference

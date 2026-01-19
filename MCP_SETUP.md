@@ -150,7 +150,7 @@ For RLM workflow prompts in Codex CLI, install the skill:
 
 ```bash
 mkdir -p ~/.codex/skills/aleph
-cp /path/to/aleph/ALEPH.md ~/.codex/skills/aleph/SKILL.md
+cp /path/to/aleph/docs/prompts/aleph.md ~/.codex/skills/aleph/SKILL.md
 ```
 
 This enables aleph commands in Codex.
@@ -360,8 +360,8 @@ Use absolute paths in tool calls (or set `--workspace-root` to a broad parent) w
 ### Actions Mode
 
 When you enable `--enable-actions`, you grant aleph permission to:
-- **Read files** - Read any file in workspace (up to 1MB by default)
-- **Write files** - Create/modify files in workspace (up to 1MB by default)
+- **Read files** - Read any file in workspace (up to 1GB by default)
+- **Write files** - Create/modify files in workspace (up to 100MB by default)
 - **Run commands** - Execute shell commands (30s timeout by default)
 - **Run tests** - Execute test commands
 Use `--workspace-mode git` to limit access to git repos, or `--workspace-mode any` to remove path restrictions.
@@ -502,7 +502,7 @@ All clients require adding `--enable-actions`:
 **Symptom:** Tools don't appear in Cursor/VS Code.
 
 **Possible causes:**
-1. aleph not installed: `pip install aleph-rlm[mcp]`
+1. aleph not installed: `pip install "aleph-rlm[mcp]"`
 2. Entry point not available: Run `aleph --help` to test
 3. Python not in PATH: Use full path to python/python3
 4. Workspace root path incorrect

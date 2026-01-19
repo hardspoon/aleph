@@ -4,262 +4,118 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PyPI version](https://img.shields.io/pypi/v/aleph-rlm.svg)](https://pypi.org/project/aleph-rlm/)
 
-Aleph is an MCP (Model Context Protocol) server that enables AI assistants to analyze documents too large for their context window. By implementing a Recursive Language Model (RLM) approach, it allows models to search, explore, and compute over massive datasets without filling up the context window.
+Aleph is an MCP (Model Context Protocol) server that lets an LLM search and compute over large local data without loading the full data into the model context.
 
-## Key Capabilities
+It keeps loaded content in a long-lived Python process (RAM) and exposes tools like regex search, slicing, and sandboxed Python execution. Only tool results are returned to the model.
 
-- **Unlimited Context**: Load files as large as your system RAM allows—gigabytes of data accessible via simple queries. The LLM never sees the raw file; it queries a Python process that holds the data in memory.
-- **Navigation Tools**: High-performance regex search and line-based navigation.
-- **Compute Sandbox**: Execute Python code over loaded content for parsing and analysis.
-- **Evidence Tracking**: Automatic citation of source text for grounded answers.
-- **Recursive Reasoning**: Spawn sub-agents to process document chunks in parallel.
+Works with any text (and JSON): logs, codebases, data dumps, API responses, and other large outputs.
 
-### How "Unlimited Context" Works
+## Quickstart
 
-Traditional LLMs are limited by their context window (~200K tokens). Aleph sidesteps this entirely:
-
-```
-┌─────────────────┐     queries      ┌─────────────────────────┐
-│   LLM Context   │ ───────────────► │   Python Process (RAM)  │
-│   (~200K tokens)│ ◄─────────────── │   (8GB, 32GB, 64GB...)  │
-│                 │   small results  │   └── your_file.txt     │
-└─────────────────┘                  └─────────────────────────┘
-```
-
-- **Python loads the entire file into RAM** as a string
-- **The LLM queries it** via `search()`, `peek()`, `lines()`, etc.
-- **Only query results** (kilobytes) enter the LLM's context—never the full file
-- **Your RAM is the limit**, not the model's context window (with a default 1GB safety cap on action tools)
-
-You can load **multiple files or entire repos** as separate contexts and query them independently.
-
-A 50MB log file? The LLM sees ~1KB of search results. A 2GB database dump? Same—just the slices you ask for.
-
-By default, Aleph sets a **1GB max file size** for read operations to avoid accidental overload, but you can raise it with `--max-file-size` based on your machine.
-This cap applies to `load_file` / `read_file`; `load_context` still accepts any size you can supply in-memory. Writes default to 100MB via `--max-write-bytes`.
-
-## Installation
+### 1) Install
 
 ```bash
 pip install "aleph-rlm[mcp]"
 ```
 
-After installation, you can automatically configure popular MCP clients:
+### 2) Configure your MCP client
+
+Automatic (recommended):
 
 ```bash
 aleph-rlm install
 ```
 
-## MCP Server
-
-Run Aleph as an MCP server with:
-
-```bash
-aleph
-```
-
-Use `--enable-actions` to allow file and command tools.
-
-### Full Power Mode
-
-For maximum capability with minimal setup, use this configuration:
-
-```bash
-aleph --enable-actions --workspace-mode any --tool-docs concise
-```
-
-This enables:
-- **All action tools** (`read_file`, `write_file`, `run_command`, `run_tests`)
-- **Any git repo access** (not limited to a single workspace root)
-- **Concise tool descriptions** (cleaner MCP tool list)
-
-Or in MCP client config:
+Manual (works in any MCP client that supports `mcpServers`):
 
 ```json
 {
   "mcpServers": {
     "aleph": {
       "command": "aleph",
-      "args": ["--enable-actions", "--workspace-mode", "any", "--tool-docs", "concise"]
+      "args": ["--enable-actions", "--tool-docs", "concise", "--workspace-root", "/absolute/path/to/your/project"]
     }
   }
 }
 ```
 
-For higher limits:
+Client-specific setup (Cursor/VS Code/Claude Desktop/Codex/Windsurf): see [MCP_SETUP.md](MCP_SETUP.md).
 
-```bash
-aleph --enable-actions --workspace-mode any --tool-docs concise --timeout 120 --max-output 50000
+### 3) Verify
+
+In your assistant, call `list_contexts()` (tool names may be prefixed by your client).
+
+## How it works (high level)
+
+```
+┌───────────────┐    tool calls     ┌────────────────────────┐
+│   LLM client  │ ────────────────► │  Aleph (Python, RAM)   │
+│ (limited ctx) │ ◄──────────────── │  search/peek/exec      │
+└───────────────┘    small results  └────────────────────────┘
 ```
 
-## Integration
+Load data into Aleph (via `load_context` or `load_file`), then explore it with `search_context` / `peek_context`, and optionally compute over it with `exec_python`.
 
-### Claude Desktop / Cursor / Windsurf
+## Actions and scope
 
-Add Aleph to your `mcpServers` configuration:
+Start the server with `--enable-actions` to allow:
+- File tools: `load_file`, `read_file`, `write_file`, `save_session`, `load_session`
+- Command tools: `run_command`, `run_tests`
+- Remote orchestration: `add_remote_server`, `call_remote_tool`, etc.
 
-```json
-{
-  "mcpServers": {
-    "aleph": {
-      "command": "aleph",
-      "args": ["--enable-actions", "--tool-docs", "concise"]
-    }
-  }
-}
-```
+`exec_python` runs in a restricted sandbox (no filesystem, no network, no subprocess).
 
-Install the `/aleph` skill for the RLM workflow prompt:
-```bash
-mkdir -p ~/.claude/commands
-cp /path/to/aleph/docs/prompts/aleph.md ~/.claude/commands/aleph.md
-```
+Workspace controls:
+- `--workspace-root`: root directory for relative paths (default: auto-detect git root or cwd)
+- `--workspace-mode`: `fixed` (workspace only), `git` (any git repo), `any` (no path restriction)
+- `--require-confirmation`: require `confirm=true` for action tool calls
 
-Then use it like:
-```
-/aleph: Find the root cause of this test failure and propose a fix.
-```
+Default limits:
+- `--max-file-size`: 1GB for `load_file`/`read_file`
+- `--max-write-bytes`: 100MB for `write_file`/`save_session`
+- `--timeout`: 30s for sandbox/commands
+- `--max-output`: 10,000 chars per command
 
-### Claude Code
+## Recursion (`sub_query`)
 
-To use Aleph with Claude Code, register the MCP server and install the workflow prompt:
+`sub_query` runs a single sub-agent over a slice of content (often produced via `chunk_context` or `chunk()` in `exec_python`). Backends:
+1. OpenAI-compatible API (if credentials are set)
+2. `claude` CLI (if installed)
+3. `codex` CLI (if installed)
+4. `gemini` CLI (if installed)
 
-```bash
-# Register the MCP server
-claude mcp add aleph aleph -- --enable-actions --tool-docs concise
+Configuration: see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
-# Add the workflow prompt
-mkdir -p ~/.claude/commands
-cp docs/prompts/aleph.md ~/.claude/commands/aleph.md
-```
+## Tool overview
 
-### Codex CLI
+Core:
+- `load_context`, `list_contexts`
+- `search_context`, `peek_context`, `chunk_context`, `diff_contexts`
+- `exec_python`, `get_variable`
+- `think`, `evaluate_progress`, `summarize_so_far`
+- `get_status`, `get_evidence`, `finalize`
 
-Add to `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.aleph]
-command = "aleph"
-args = ["--enable-actions", "--tool-docs", "concise"]
-```
-
-## How It Works
-
-1. **Load**: Store a document in external memory via `load_context` or `load_file` (with `--enable-actions`).
-2. **Explore**: Search for patterns using `search_context` or view slices with `peek_context`.
-3. **Compute**: Run Python scripts over the content in a secure sandbox via `exec_python`.
-4. **Finalize**: Generate an answer with linked evidence and citations using `finalize`.
-
-## Recursion: Handling Very Large Inputs
-
-When content is too large even for slice-based exploration, Aleph supports **recursive decomposition**:
-
-1. **Chunk** the content into manageable pieces
-2. **Spawn sub-agents** to analyze each chunk
-3. **Synthesize** findings into a final answer
-
-```python
-# exec_python
-chunks = chunk(100_000)  # split into ~100K char pieces
-results = [sub_query("Extract key findings.", context_slice=c) for c in chunks]
-final = sub_query("Synthesize into a summary:", context_slice="\n\n".join(results))
-```
-
-`sub_query` can use an API backend (OpenAI-compatible) or spawn a local CLI (Claude, Codex, Gemini) - whichever is available.
-
-### Sub-query backends
-
-When `ALEPH_SUB_QUERY_BACKEND` is `auto` (default), Aleph chooses the first available backend:
-
-1. **API** - if API credentials are available
-2. **claude CLI** - if installed
-3. **codex CLI** - if installed
-4. **gemini CLI** - if installed
-
-Quick setup:
-
-```bash
-# OpenAI-compatible API (OpenAI, Groq, Together, local LLMs, etc.)
-export ALEPH_SUB_QUERY_API_KEY=sk-...
-export ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
-
-# Optional: custom endpoint
-export ALEPH_SUB_QUERY_URL=https://api.your-provider.com/v1
-```
-
-> **Note:** Some MCP clients don't reliably pass `env` vars from their config to the server process. If `sub_query` reports "API key not found" despite your client's MCP settings, add the exports to your shell profile (`~/.zshrc` or `~/.bashrc`) and restart your terminal/client.
-
-For a full list of options, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
-
-## Available Tools
-
-Aleph exposes the full toolset below.
-
-### Core exploration
-| Tool | Description |
-|------|-------------|
-| `load_context` | Store text or JSON in external memory. |
-| `list_contexts` | List loaded contexts and metadata. |
-| `peek_context` | View specific line or character ranges. |
-| `search_context` | Perform regex searches with surrounding context. |
-| `chunk_context` | Split content into navigable chunks. |
-| `diff_contexts` | Diff two contexts (text or JSON). |
-| `exec_python` | Run Python code over the loaded content. |
-| `get_variable` | Retrieve a variable from the exec_python sandbox. |
-
-### Reasoning workflow
-| Tool | Description |
-|------|-------------|
-| `think` | Structure reasoning for complex problems. |
-| `get_status` | Show current session state. |
-| `get_evidence` | Retrieve collected citations. |
-| `evaluate_progress` | Self-evaluate progress with convergence tracking. |
-| `summarize_so_far` | Summarize progress on long tasks. |
-| `finalize` | Complete with answer and evidence. |
-
-### Recursion
-| Tool | Description |
-|------|-------------|
-| `sub_query` | Spawn a sub-agent on a content slice. |
-
-### Session management
-| Tool | Description |
-|------|-------------|
-| `save_session` | Persist current session to file. |
-| `load_session` | Load a saved session from file. |
-
-### Remote MCP orchestration
-| Tool | Description |
-|------|-------------|
-| `add_remote_server` | Register a remote MCP server. |
-| `list_remote_servers` | List registered remote MCP servers. |
-| `list_remote_tools` | List tools available on a remote server. |
-| `call_remote_tool` | Call a tool on a remote MCP server. |
-| `close_remote_server` | Close a remote MCP server connection. |
-
-### Action tools
-*Enabled with the `--enable-actions` flag. Use `--workspace-root` and `--workspace-mode` (`fixed`, `git`, `any`) to control scope.*
-| Tool | Description |
-|------|-------------|
-| `load_file` | Load a workspace file into a context. |
-| `read_file` / `write_file` | File system access (workspace-scoped). |
-| `run_command` | Shell execution. |
-| `run_tests` | Execute test commands (supports optional `cwd`). |
+Requires `--enable-actions`:
+- `load_file`, `read_file`, `write_file`
+- `run_command`, `run_tests`
+- `save_session`, `load_session`
+- `add_remote_server`, `list_remote_servers`, `list_remote_tools`, `call_remote_tool`, `close_remote_server`
 
 ## Configuration
 
 For full configuration options (limits, budgets, and backend details), see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
+## Documentation
+
+- [MCP_SETUP.md](MCP_SETUP.md) — client configuration and workspace scoping
+- [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — CLI flags and environment variables
+- [docs/prompts/aleph.md](docs/prompts/aleph.md) — concise workflow prompt + tool reference
+- [CHANGELOG.md](CHANGELOG.md) — release notes
+- [DEVELOPMENT.md](DEVELOPMENT.md) — architecture and development
+
 ## Changelog
 
-### 0.5.6
-
-- Removed deprecated recipe workflow and aider backend references.
-- Added Gemini CLI sub-query backend and updated backend priority docs.
-- Improved sub-query system prompt for structured output.
-- Added Full Power Mode docs and made installer defaults max power.
-- Added `--max-write-bytes` and aligned file size limits across docs.
-- Clarified action-tool file size caps and workspace mode usage.
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## Development
 
@@ -279,8 +135,6 @@ Aleph implements the Recursive Language Model (RLM) architecture described in:
 > **Recursive Language Models**
 > Zhang, A. L., Kraska, T., & Khattab, O. (2025)
 > [arXiv:2512.24601](https://arxiv.org/abs/2512.24601)
-
-RLMs treat the input context as an external environment variable rather than part of the prompt. This allows models to programmatically decompose inputs, recursively query themselves over chunks, and synthesize results—processing inputs far beyond their native context window.
 
 ## License
 

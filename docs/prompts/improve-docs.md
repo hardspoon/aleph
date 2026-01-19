@@ -7,7 +7,7 @@ Use this prompt to rewrite Aleph's documentation to be more accessible, research
 ## Prompt
 
 ```
-I need you to improve the documentation for Aleph, an MCP server for recursive LLM reasoning over documents.
+I need you to improve the documentation for Aleph, an MCP server for recursive LLM reasoning over large local data.
 
 **Goals:**
 1. Make it accessible to developers who aren't familiar with MCP or recursive reasoning
@@ -18,8 +18,7 @@ I need you to improve the documentation for Aleph, an MCP server for recursive L
 
 **Files to review and potentially update:**
 - README.md
-- docs/1-4-update.md (implementation plan for sub_query feature)
-- CLAUDE.md (should this be renamed?)
+- docs/archive/1-4-update.md (historical implementation plan for sub_query)
 
 **Tone guidelines:**
 - Be direct and practical, not salesy
@@ -44,7 +43,7 @@ I need you to improve the documentation for Aleph, an MCP server for recursive L
 - The AI iteratively explores with search, peek, code execution
 - sub_query enables RLM-style recursive reasoning (chunk → query sub-agent → aggregate)
 - Works with Claude, GPT, Qwen, any MCP-compatible host
-- CLI backends (claude, codex) need no API key; API fallback uses Mimo (free)
+- CLI backends (claude/codex/gemini) need no API key; API backend uses OpenAI-compatible endpoints
 
 **Things to remove or tone down:**
 - Excessive emoji
@@ -59,7 +58,7 @@ The RLM paper (arXiv:2512.24601) showed that:
 - Recursive sub-LM calls let the model decompose and aggregate
 - This approach is task-agnostic and cost-comparable to base model calls
 
-Please review the current docs, propose specific changes, and implement them. Focus on making Aleph approachable for a developer who just wants to analyze long documents with AI.
+Please review the current docs, propose specific changes, and implement them. Focus on making Aleph approachable for a developer who just wants to analyze large data with AI.
 ```
 
 ---
