@@ -138,10 +138,18 @@ If you need to parse results in `exec_python`, prefer line-based formats like `K
 
 ## exec_python Helpers
 
+**Core:**
 - `ctx`, `peek(start, end)`, `lines(start, end)`, `search(pattern)`, `chunk(size)`
 - `cite(snippet, line_range, note)` for evidence
 - `sub_query(prompt, context_slice)` for recursion
-- Common extractors: `extract_emails()`, `extract_dates()`, `extract_urls()`, `extract_functions()`, `word_frequency()`
+
+**100+ built-in helpers** including:
+- Extractors: `extract_emails()`, `extract_urls()`, `extract_dates()`, `extract_ips()`, `extract_functions()`
+- Statistics: `word_count()`, `line_count()`, `word_frequency()`, `ngrams()`
+- Line ops: `head()`, `tail()`, `grep()`, `sort_lines()`, `columns()`
+- Validation: `is_email()`, `is_url()`, `is_json()`, `is_numeric()`
+
+Extractors return `list[dict]` with keys: `value`, `line_num`, `start`, `end`.
 
 ## Troubleshooting
 

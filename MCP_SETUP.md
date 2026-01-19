@@ -44,7 +44,9 @@ Error: Path '/path/to/your-project/aleph/mcp/local_server.py' escapes workspace 
 
 ## Cursor Configuration
 
-Create or edit `.cursor/mcp.json`:
+Create or edit your Cursor MCP config:
+- **macOS/Linux:** `~/.cursor/mcp.json`
+- **Windows:** `%USERPROFILE%\.cursor\mcp.json`
 
 ```json
 {
@@ -65,7 +67,9 @@ Create or edit `.cursor/mcp.json`:
 
 ## VS Code Configuration
 
-Create or edit `.vscode/mcp.json`:
+Create or edit your VS Code MCP config:
+- **macOS/Linux:** `~/.vscode/mcp.json`
+- **Windows:** `%USERPROFILE%\.vscode\mcp.json`
 
 ```json
 {
@@ -96,7 +100,9 @@ aleph-rlm install claude-code
 Then restart Claude Desktop - it will auto-discover aleph.
 
 **Option 2: Manual Configuration**
-Add to `~/.claude/settings.json`:
+Add to your Claude settings file:
+- **macOS/Linux:** `~/.claude/settings.json`
+- **Windows:** `%USERPROFILE%\.claude\settings.json`
 
 ```json
 {
@@ -117,18 +123,40 @@ Add to `~/.claude/settings.json`:
 
 ### Installing Claude Desktop Skill
 
-For RLM workflow prompts in Claude Desktop, install the `/aleph` skill:
+For RLM workflow prompts, install the `/aleph` skill:
+
+**Option 1:** Download [`docs/prompts/aleph.md`](docs/prompts/aleph.md) and save to:
+- macOS/Linux: `~/.claude/commands/aleph.md`
+- Windows: `%USERPROFILE%\.claude\commands\aleph.md`
+
+**Option 2:** From installed package:
+
+<details>
+<summary>macOS/Linux</summary>
 
 ```bash
 mkdir -p ~/.claude/commands
-cp /path/to/aleph/docs/prompts/aleph.md ~/.claude/commands/aleph.md
+cp "$(python -c "import aleph; print(aleph.__path__[0])")/../docs/prompts/aleph.md" ~/.claude/commands/aleph.md
 ```
+</details>
+
+<details>
+<summary>Windows (PowerShell)</summary>
+
+```powershell
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.claude\commands"
+$alephPath = python -c "import aleph; print(aleph.__path__[0])"
+Copy-Item "$alephPath\..\docs\prompts\aleph.md" "$env:USERPROFILE\.claude\commands\aleph.md"
+```
+</details>
 
 This enables the `/aleph` command for structured reasoning workflow.
 
 ## Codex CLI Configuration
 
-Add to `~/.codex/config.toml`:
+Add to your Codex config:
+- **macOS/Linux:** `~/.codex/config.toml`
+- **Windows:** `%USERPROFILE%\.codex\config.toml`
 
 ```toml
 [mcp_servers.aleph]
@@ -146,14 +174,34 @@ args = ["--workspace-root", "/path/to/your-project", "--enable-actions", "--tool
 
 ### Installing Codex Skill
 
-For RLM workflow prompts in Codex CLI, install the skill:
+For RLM workflow prompts, install the `$aleph` skill:
+
+**Option 1:** Download [`docs/prompts/aleph.md`](docs/prompts/aleph.md) and save to:
+- macOS/Linux: `~/.codex/skills/aleph/SKILL.md`
+- Windows: `%USERPROFILE%\.codex\skills\aleph\SKILL.md`
+
+**Option 2:** From installed package:
+
+<details>
+<summary>macOS/Linux</summary>
 
 ```bash
 mkdir -p ~/.codex/skills/aleph
-cp /path/to/aleph/docs/prompts/aleph.md ~/.codex/skills/aleph/SKILL.md
+cp "$(python -c "import aleph; print(aleph.__path__[0])")/../docs/prompts/aleph.md" ~/.codex/skills/aleph/SKILL.md
 ```
+</details>
 
-This enables aleph commands in Codex.
+<details>
+<summary>Windows (PowerShell)</summary>
+
+```powershell
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.codex\skills\aleph"
+$alephPath = python -c "import aleph; print(aleph.__path__[0])"
+Copy-Item "$alephPath\..\docs\prompts\aleph.md" "$env:USERPROFILE\.codex\skills\aleph\SKILL.md"
+```
+</details>
+
+This enables the `$aleph` command in Codex.
 
 ## Parameters Explained
 
@@ -219,7 +267,11 @@ export ALEPH_SUB_QUERY_MODEL=llama3.2
 | `ALEPH_SUB_QUERY_URL` | API base URL (fallback: `OPENAI_BASE_URL`) |
 | `ALEPH_SUB_QUERY_MODEL` | Model name (required for API backend) |
 
-> **Note:** Some MCP clients don't reliably pass `env` vars from their config to the server process. If `sub_query` reports "API key not found" despite your client's MCP settings, add the exports to your shell profile (`~/.zshrc` or `~/.bashrc`) and restart your terminal/client.
+> **Note:** Some MCP clients don't reliably pass `env` vars from their config to the server process. If `sub_query` reports "API key not found" despite your client's MCP settings, add the exports to your shell profile:
+> - **macOS/Linux:** `~/.zshrc` or `~/.bashrc`
+> - **Windows:** System Environment Variables or `$PROFILE` in PowerShell
+>
+> Then restart your terminal/client.
 
 For a full list of options, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
@@ -529,15 +581,17 @@ python3 -m aleph.mcp.server --help
 **Cause:** Some MCP clients don't reliably pass `env` vars from their config to the server process.
 
 **Solution:** Add credentials to your shell profile:
+
+**macOS/Linux** (add to `~/.zshrc` or `~/.bashrc`):
 ```bash
-# For bash/zsh:
 export ALEPH_SUB_QUERY_API_KEY=sk-...
 export ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
+```
 
-# Or for other OpenAI-compatible providers:
-export ALEPH_SUB_QUERY_API_KEY=your_key
-export ALEPH_SUB_QUERY_URL=https://api.your-provider.com/v1
-export ALEPH_SUB_QUERY_MODEL=your-model-name
+**Windows** (add to System Environment Variables, or PowerShell `$PROFILE`):
+```powershell
+$env:ALEPH_SUB_QUERY_API_KEY = "sk-..."
+$env:ALEPH_SUB_QUERY_MODEL = "gpt-5.2-codex"
 ```
 
 Then restart your terminal/MCP client.

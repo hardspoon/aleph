@@ -10,7 +10,9 @@ pip install "aleph-rlm[mcp]"
 aleph-rlm install codex
 ```
 
-Manual config (TOML) in `~/.codex/config.toml`:
+Manual config in your Codex config file:
+- **macOS/Linux:** `~/.codex/config.toml`
+- **Windows:** `%USERPROFILE%\.codex\config.toml`
 ```toml
 [mcp_servers.aleph]
 command = "aleph"
@@ -21,11 +23,32 @@ Restart Codex CLI after changes.
 
 ## Codex Skills
 
-Codex skills live in `~/.codex/skills`. To install the `/aleph` skill from this repo:
+Install the `$aleph` skill:
+
+**Option 1:** Download [`docs/prompts/aleph.md`](../prompts/aleph.md) and save to:
+- macOS/Linux: `~/.codex/skills/aleph/SKILL.md`
+- Windows: `%USERPROFILE%\.codex\skills\aleph\SKILL.md`
+
+**Option 2:** From installed package:
+
+<details>
+<summary>macOS/Linux</summary>
+
 ```bash
 mkdir -p ~/.codex/skills/aleph
-cp /path/to/aleph/docs/prompts/aleph.md ~/.codex/skills/aleph/SKILL.md
+cp "$(python -c "import aleph; print(aleph.__path__[0])")/../docs/prompts/aleph.md" ~/.codex/skills/aleph/SKILL.md
 ```
+</details>
+
+<details>
+<summary>Windows (PowerShell)</summary>
+
+```powershell
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.codex\skills\aleph"
+$alephPath = python -c "import aleph; print(aleph.__path__[0])"
+Copy-Item "$alephPath\..\docs\prompts\aleph.md" "$env:USERPROFILE\.codex\skills\aleph\SKILL.md"
+```
+</details>
 
 Restart Codex CLI after changes.
 
