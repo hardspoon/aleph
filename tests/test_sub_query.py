@@ -50,7 +50,7 @@ class TestDetectBackend:
     2. API (if credentials available)
     3. claude CLI (if installed)
     4. codex CLI (if installed)
-    5. aider CLI (if installed)
+    5. gemini CLI (if installed)
     6. API fallback (will error with helpful message)
     """
 
@@ -94,12 +94,12 @@ class TestDetectBackend:
                 mock_which.side_effect = lambda x: "/usr/bin/codex" if x == "codex" else None
                 assert detect_backend() == "codex"
 
-    def test_detect_backend_aider_when_no_api_credentials(self):
-        """Aider CLI should be used when no API credentials and no Claude/Codex."""
+    def test_detect_backend_gemini_when_no_api_credentials(self):
+        """Gemini CLI should be used when no API credentials and no Claude/Codex."""
         with patch.dict(os.environ, {}, clear=True):
             with patch("aleph.sub_query.shutil.which") as mock_which:
-                mock_which.side_effect = lambda x: "/usr/bin/aider" if x == "aider" else None
-                assert detect_backend() == "aider"
+                mock_which.side_effect = lambda x: "/usr/bin/gemini" if x == "gemini" else None
+                assert detect_backend() == "gemini"
 
     def test_detect_backend_api_fallback(self):
         """API fallback when nothing else available (will error with helpful message)."""
@@ -393,4 +393,4 @@ class TestCliBackends:
         assert isinstance(CLI_BACKENDS, tuple)
         assert "claude" in CLI_BACKENDS
         assert "codex" in CLI_BACKENDS
-        assert "aider" in CLI_BACKENDS
+        assert "gemini" in CLI_BACKENDS

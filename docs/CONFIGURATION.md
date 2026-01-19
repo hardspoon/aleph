@@ -15,7 +15,7 @@ This guide covers all configuration options for Aleph, including environment var
 
 ## Sub-Query Configuration
 
-The `sub_query` tool spawns independent sub-agents for recursive reasoning. It uses **OpenAI-compatible APIs only**.
+The `sub_query` tool spawns independent sub-agents for recursive reasoning. It can use an API backend (OpenAI-compatible) or a local CLI backend (Claude, Codex, Gemini).
 
 ### Backend Priority (auto mode)
 
@@ -24,7 +24,7 @@ When `ALEPH_SUB_QUERY_BACKEND` is not set or set to `auto`:
 1. **API** -- if any API credentials are available
 2. **claude CLI** -- if installed (uses Claude Code subscription)
 3. **codex CLI** -- if installed (uses OpenAI subscription)
-4. **aider CLI** -- if installed
+4. **gemini CLI** -- if installed (uses Google Gemini subscription)
 
 ### Force a Specific Backend
 
@@ -38,8 +38,8 @@ export ALEPH_SUB_QUERY_BACKEND=claude
 # Force Codex CLI
 export ALEPH_SUB_QUERY_BACKEND=codex
 
-# Force Aider CLI
-export ALEPH_SUB_QUERY_BACKEND=aider
+# Force Gemini CLI
+export ALEPH_SUB_QUERY_BACKEND=gemini
 ```
 
 ### API Backend Configuration
@@ -105,9 +105,10 @@ export ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
 - Uses your existing OpenAI subscription
 - Spawns: `codex -q "prompt"`
 
-**Aider CLI (`aider`):**
-- Requires Aider installed: `pip install aider-chat`
-- Spawns: `aider --message "prompt" --yes --no-git --no-auto-commits`
+**Gemini CLI (`gemini`):**
+- Requires Gemini CLI installed: `npm install -g @google/gemini-cli`
+- Uses your existing Google/Gemini subscription (free tier available)
+- Spawns: `gemini -p "prompt"`
 
 ## MCP Server Configuration
 
@@ -122,6 +123,9 @@ aleph --enable-actions --tool-docs concise
 
 # Custom timeout and output limits
 aleph --timeout 60 --max-output 20000
+
+# Custom file size limits (read/write)
+aleph --enable-actions --max-file-size 2000000000 --max-write-bytes 200000000
 
 # Require confirmation for action tools
 aleph --enable-actions --tool-docs concise --require-confirmation
@@ -217,49 +221,6 @@ budget = Budget(
 )
 ```
 
-## Recipe/Alephfile Configuration
-
-Alephfiles define reproducible analysis runs:
-
-```yaml
-# aleph.yaml
-schema: aleph.recipe.v1
-query: "Find all security vulnerabilities in this codebase"
-
-datasets:
-  - id: source
-    path: ./src
-    type: directory
-  - id: tests
-    path: ./tests
-    type: directory
-
-model: gpt-5.2-codex  # or any OpenAI-compatible model
-max_iterations: 50
-timeout_seconds: 600
-max_tokens: 500000
-
-tools:
-  enabled:
-    - search_context
-    - exec_python
-    - sub_query
-  disabled:
-    - run_command  # Disable shell access
-```
-
-Load and run:
-
-```python
-from aleph.recipe import load_alephfile, RecipeRunner
-
-config = load_alephfile("aleph.yaml")
-runner = RecipeRunner(config)
-runner.start()
-# ... execute tools ...
-result = runner.finalize(answer="Found 3 issues", success=True)
-```
-
 ## Environment File
 
 Create a `.env` file in your project root:
@@ -289,7 +250,7 @@ Load with your shell or tool of choice (e.g., `source .env`, `dotenv`, or IDE in
 1. Check backend detection:
    ```bash
    # Which CLI tools are available?
-   which claude codex aider
+   which claude codex
 
    # Are API credentials set?
    echo $ALEPH_SUB_QUERY_API_KEY $OPENAI_API_KEY

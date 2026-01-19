@@ -1,6 +1,6 @@
 """CLI backend for sub-queries.
 
-Spawns CLI tools (claude, codex, aider) as sub-agents.
+Spawns CLI tools (claude, codex) as sub-agents.
 This allows RLM-style recursive reasoning without API keys.
 """
 
@@ -15,13 +15,13 @@ from typing import Literal
 __all__ = ["run_cli_sub_query", "CLI_BACKENDS"]
 
 
-CLI_BACKENDS = ("claude", "codex", "aider")
+CLI_BACKENDS = ("claude", "codex", "gemini")
 
 
 async def run_cli_sub_query(
     prompt: str,
     context_slice: str | None = None,
-    backend: Literal["claude", "codex", "aider"] = "claude",
+    backend: Literal["claude", "codex", "gemini"] = "claude",
     timeout: float = 120.0,
     cwd: Path | None = None,
     max_output_chars: int = 50_000,
@@ -78,9 +78,9 @@ async def _run_with_arg(
     elif backend == "codex":
         # OpenAI Codex CLI
         cmd = ["codex", "-q", prompt]
-    elif backend == "aider":
-        # Aider CLI
-        cmd = ["aider", "--message", prompt, "--yes", "--no-git", "--no-auto-commits"]
+    elif backend == "gemini":
+        # Google Gemini CLI: -p for prompt mode (non-interactive)
+        cmd = ["gemini", "-p", prompt]
     else:
         return False, f"Unknown CLI backend: {backend}"
     
@@ -132,9 +132,10 @@ async def _run_with_tempfile(
         elif backend == "codex":
             cmd = ["codex", "-q", f"@{temp_path}"]
             stdin_data = None
-        elif backend == "aider":
-            cmd = ["aider", "--message-file", temp_path, "--yes", "--no-git", "--no-auto-commits"]
-            stdin_data = None
+        elif backend == "gemini":
+            # Gemini reads from stdin with -p flag
+            cmd = ["gemini", "-p"]
+            stdin_data = prompt.encode("utf-8")
         else:
             return False, f"Unknown CLI backend: {backend}"
         

@@ -40,20 +40,6 @@ from typing import Any, Literal, cast
 
 from ..repl.sandbox import REPLEnvironment, SandboxConfig
 from ..types import ContentFormat, ContextMetadata
-from ..recipe import (
-    RecipeConfig,
-    RecipeRunner,
-    RecipeResult,
-    RecipeMetrics,
-    EvidenceBundle,
-    EvidenceItem,
-    DatasetInput,
-    load_alephfile,
-    save_alephfile,
-    hash_content,
-    compute_baseline_tokens,
-    SCHEMA_VERSION,
-)
 from ..sub_query import SubQueryConfig, detect_backend, has_api_credentials
 from ..sub_query.cli_backend import run_cli_sub_query, CLI_BACKENDS
 from ..sub_query.api_backend import run_api_sub_query
@@ -281,8 +267,6 @@ class AlephMCPServerLocal:
         self.sub_query_config = sub_query_config or SubQueryConfig()
         self.tool_docs_mode = tool_docs_mode
         self._sessions: dict[str, _Session] = {}
-        self._recipes: dict[str, RecipeRunner] = {}
-        self._recipe_results: dict[str, RecipeResult] = {}
         self._remote_servers: dict[str, _RemoteServerHandle] = {}
 
         # Import MCP lazily so it's an optional dependency
@@ -290,7 +274,7 @@ class AlephMCPServerLocal:
             from mcp.server.fastmcp import FastMCP
         except Exception as e:
             raise RuntimeError(
-                "MCP support requires the `mcp` package. Install with `pip install aleph[mcp]`."
+                "MCP support requires the `mcp` package. Install with `pip install aleph-rlm[mcp]`."
             ) from e
 
         self.server = FastMCP("aleph-local")
@@ -364,7 +348,6 @@ class AlephMCPServerLocal:
         tool: str,
         arguments: dict[str, Any] | None = None,
         timeout_seconds: float | None = 30.0,
-        recipe_id: str | None = None,
     ) -> tuple[bool, Any]:
         ok, res = await self._ensure_remote_server(server_id)
         if not ok:
@@ -387,21 +370,6 @@ class AlephMCPServerLocal:
             return False, f"Error: call_tool failed: {e}"
 
         result_jsonable = _to_jsonable(result)
-
-        if recipe_id and recipe_id in self._recipes:
-            runner = self._recipes[recipe_id]
-            runner.record_trace(
-                tool=f"remote:{server_id}:{tool}",
-                args={"server_id": server_id, "tool": tool, "arguments": arguments or {}},
-                result=result_jsonable,
-            )
-            runner.add_evidence(
-                source="remote",
-                snippet=json.dumps(result_jsonable, ensure_ascii=False)[:500],
-                pattern=tool,
-                note=f"remote server={server_id}",
-                dataset_id=f"remote:{server_id}",
-            )
 
         return True, result_jsonable
 
@@ -1851,10 +1819,10 @@ class AlephMCPServerLocal:
             1. API - if ALEPH_SUB_QUERY_API_KEY or OPENAI_API_KEY is set (most reliable)
             2. claude CLI - if installed
             3. codex CLI - if installed
-            4. aider CLI - if installed
+            4. gemini CLI - if installed
 
             Configure via environment:
-            - ALEPH_SUB_QUERY_BACKEND: Force specific backend ("api", "claude", "codex", "aider")
+            - ALEPH_SUB_QUERY_BACKEND: Force specific backend ("api", "claude", "codex", "gemini")
             - ALEPH_SUB_QUERY_API_KEY or OPENAI_API_KEY: API credentials
             - ALEPH_SUB_QUERY_URL or OPENAI_BASE_URL: Custom endpoint for OpenAI-compatible APIs
             - ALEPH_SUB_QUERY_MODEL: Model name (required)
@@ -1863,7 +1831,7 @@ class AlephMCPServerLocal:
                 prompt: The question/task for the sub-agent
                 context_slice: Optional context to include (e.g., a chunk from ctx)
                 context_id: Session to record evidence in
-                backend: "auto", "claude", "codex", "aider", or "api"
+                backend: "auto", "claude", "codex", "gemini", or "api"
 
             Returns:
                 The sub-agent's response
@@ -2066,18 +2034,16 @@ class AlephMCPServerLocal:
             tool: str,
             arguments: dict[str, Any] | None = None,
             timeout_seconds: float | None = 30.0,
-            recipe_id: str | None = None,
             confirm: bool = False,
             output: Literal["json", "markdown", "object"] = "markdown",
         ) -> str | dict[str, Any]:
-            """Call a tool on a remote MCP server and record it in the run trace.
+            """Call a tool on a remote MCP server.
 
             Args:
                 server_id: Registered remote server ID
                 tool: Tool name
                 arguments: Tool arguments object
                 timeout_seconds: Tool call timeout (best-effort)
-                recipe_id: If provided, attaches call to a recipe trace/evidence
                 confirm: Required if actions are enabled
                 output: Output format
             """
@@ -2093,7 +2059,6 @@ class AlephMCPServerLocal:
                 tool=tool,
                 arguments=arguments,
                 timeout_seconds=timeout_seconds,
-                recipe_id=recipe_id,
             )
             if not ok2:
                 return _format_error(str(result_jsonable), output=output)
@@ -2402,436 +2367,6 @@ class AlephMCPServerLocal:
 
             return "\n".join(parts)
 
-        # =====================================================================
-        # Recipe/Alephfile Tools (v0.5)
-        # =====================================================================
-
-        @_tool()
-        async def load_recipe(
-            path: str,
-            recipe_id: str = "default",
-            confirm: bool = False,
-            output: Literal["json", "markdown", "object"] = "markdown",
-        ) -> str | dict[str, Any]:
-            """Load an Alephfile recipe for execution.
-
-            An Alephfile defines a reproducible analysis run with datasets,
-            query, tool config, and budget constraints.
-
-            Args:
-                path: Path to the Alephfile (JSON or YAML)
-                recipe_id: Identifier for this recipe (default: "default")
-                confirm: Required if actions are enabled
-                output: Output format
-
-            Returns:
-                Recipe summary with datasets and configuration
-            """
-            err = _require_actions(confirm)
-            if err:
-                return _format_error(err, output=output)
-
-            try:
-                p = _scoped_path(
-                    self.action_config.workspace_root,
-                    path,
-                    self.action_config.workspace_mode,
-                )
-            except Exception as e:
-                return _format_error(str(e), output=output)
-
-            try:
-                config = load_alephfile(p)
-            except Exception as e:
-                return _format_error(f"Error loading Alephfile: {e}", output=output)
-
-            runner = RecipeRunner(config)
-            runner.start()
-
-            # Load datasets and compute baseline
-            try:
-                loaded = runner.load_datasets()
-            except Exception as e:
-                return _format_error(f"Error loading datasets: {e}", output=output)
-
-            self._recipes[recipe_id] = runner
-
-            # Also load datasets into sessions for exploration
-            for ds_id, content in loaded.items():
-                ctx_id = f"{recipe_id}:{ds_id}"
-                fmt = _detect_format(content)
-                meta = _analyze_text_context(content, fmt)
-                repl = REPLEnvironment(
-                    context=content,
-                    context_var_name="ctx",
-                    config=self.sandbox_config,
-                    loop=asyncio.get_running_loop(),
-                )
-                repl.set_variable("line_number_base", DEFAULT_LINE_NUMBER_BASE)
-                self._sessions[ctx_id] = _Session(
-                    repl=repl,
-                    meta=meta,
-                    line_number_base=DEFAULT_LINE_NUMBER_BASE,
-                )
-
-            if output in {"json", "object"}:
-                return _format_payload(
-                    {
-                        "recipe_id": recipe_id,
-                        "query": config.query,
-                        "datasets": [d.to_dict() for d in config.datasets],
-                        "baseline_tokens": runner.metrics.tokens_baseline,
-                        "model": config.model,
-                        "max_iterations": config.max_iterations,
-                    },
-                    output=output,
-                )
-
-            parts = [
-                "## Recipe Loaded",
-                "",
-                f"**Recipe ID:** `{recipe_id}`",
-                f"**Query:** {config.query}",
-                "",
-                "### Datasets",
-            ]
-            for ds in config.datasets:
-                parts.append(f"- `{ds.id}`: {ds.size_bytes:,} bytes, ~{ds.size_tokens_estimate:,} tokens")
-                if ds.content_hash:
-                    parts.append(f"  - Hash: `{ds.content_hash[:32]}...`")
-
-            parts.extend([
-                "",
-                "### Budget",
-                f"- Max iterations: {config.max_iterations}",
-                f"- Max tokens: {config.max_tokens or 'unlimited'}",
-                f"- Timeout: {config.timeout_seconds}s",
-                "",
-                "### Baseline Estimate",
-                f"- Context-stuffing approach would use ~{runner.metrics.tokens_baseline:,} tokens",
-                "",
-                "*Use `get_metrics(recipe_id)` during execution to track efficiency.*",
-            ])
-            return "\n".join(parts)
-
-        @_tool()
-        async def get_metrics(
-            recipe_id: str = "default",
-            context_id: str | None = None,
-            output: Literal["json", "markdown", "object"] = "markdown",
-        ) -> str | dict[str, Any]:
-            """Get token efficiency metrics for a recipe or session.
-
-            Shows tokens used vs baseline (context-stuffing approach) and
-            computes efficiency ratio = tokens_saved / tokens_baseline.
-
-            Args:
-                recipe_id: Recipe identifier
-                context_id: Optional specific context to get metrics for
-                output: Output format
-
-            Returns:
-                Metrics including tokens_used, tokens_baseline, tokens_saved, efficiency_ratio
-            """
-            if recipe_id not in self._recipes:
-                # Fall back to session-based metrics
-                cid = context_id or "default"
-                if cid not in self._sessions:
-                    return _format_error(f"No recipe '{recipe_id}' or session '{cid}' found", output=output)
-
-                session = self._sessions[cid]
-                # Estimate baseline from session metadata
-                baseline = session.meta.size_tokens_estimate * 3 + 500 * 3
-                # Estimate tokens used from iterations (rough: 500 per iteration)
-                used = session.iterations * 500
-                saved = max(0, baseline - used)
-                ratio = saved / baseline if baseline > 0 else 0.0
-
-                metrics = {
-                    "context_id": cid,
-                    "tokens_used": used,
-                    "tokens_baseline": baseline,
-                    "tokens_saved": saved,
-                    "efficiency_ratio": round(ratio, 4),
-                    "iterations": session.iterations,
-                    "evidence_count": len(session.evidence),
-                }
-            else:
-                runner = self._recipes[recipe_id]
-                runner.metrics.compute_efficiency()
-                metrics = {
-                    "recipe_id": recipe_id,
-                    **runner.metrics.to_dict(),
-                }
-
-            if output in {"json", "object"}:
-                return _format_payload(metrics, output=output)
-
-            parts = [
-                "## Token Efficiency Metrics",
-                "",
-                f"**Tokens Used:** {metrics['tokens_used']:,}",
-                f"**Tokens Baseline:** {metrics['tokens_baseline']:,}",
-                f"**Tokens Saved:** {metrics['tokens_saved']:,}",
-                f"**Efficiency Ratio:** {metrics['efficiency_ratio']:.1%}",
-                "",
-                f"*Iterations: {metrics['iterations']} | Evidence: {metrics.get('evidence_count', 0)}*",
-            ]
-
-            if metrics['efficiency_ratio'] > 0.5:
-                parts.append("")
-                parts.append(f"🎯 **Aleph saved {metrics['efficiency_ratio']:.0%} of tokens vs context-stuffing!**")
-
-            return "\n".join(parts)
-
-        @_tool()
-        async def finalize_recipe(
-            recipe_id: str = "default",
-            answer: str = "",
-            success: bool = True,
-            context_id: str | None = None,
-            output: Literal["json", "markdown", "object"] = "markdown",
-        ) -> str | dict[str, Any]:
-            """Finalize a recipe run and generate the result bundle.
-
-            Collects all evidence, computes final metrics, and produces
-            a reproducible result that can be exported.
-
-            Args:
-                recipe_id: Recipe identifier
-                answer: Final answer from the analysis
-                success: Whether the analysis succeeded
-                context_id: Optional context to pull evidence from
-                output: Output format
-
-            Returns:
-                Final result summary with metrics and evidence count
-            """
-            if recipe_id not in self._recipes:
-                return _format_error(f"No recipe '{recipe_id}' found. Use load_recipe first.", output=output)
-
-            runner = self._recipes[recipe_id]
-
-            # Collect evidence from associated sessions
-            for ds in runner.config.datasets:
-                ctx_id = f"{recipe_id}:{ds.id}"
-                if ctx_id in self._sessions:
-                    session = self._sessions[ctx_id]
-                    for ev in session.evidence:
-                        runner.add_evidence(
-                            source=ev.source,
-                            snippet=ev.snippet,
-                            line_range=ev.line_range,
-                            pattern=ev.pattern,
-                            note=ev.note,
-                            dataset_id=ds.id,
-                        )
-
-            # Also collect from specified context_id
-            if context_id and context_id in self._sessions:
-                session = self._sessions[context_id]
-                for ev in session.evidence:
-                    runner.add_evidence(
-                        source=ev.source,
-                        snippet=ev.snippet,
-                        line_range=ev.line_range,
-                        pattern=ev.pattern,
-                        note=ev.note,
-                    )
-
-            result = runner.finalize(answer, success)
-            self._recipe_results[recipe_id] = result
-
-            if output in {"json", "object"}:
-                return _format_payload(result.to_dict(), output=output)
-
-            parts = [
-                "## Recipe Result",
-                "",
-                f"**Recipe ID:** `{recipe_id}`",
-                f"**Success:** {result.success}",
-                "",
-                "### Answer",
-                result.answer,
-                "",
-                "### Metrics",
-                f"- Tokens used: {result.metrics.tokens_used:,}",
-                f"- Tokens saved: {result.metrics.tokens_saved:,}",
-                f"- Efficiency: {result.metrics.efficiency_ratio:.1%}",
-                f"- Iterations: {result.metrics.iterations}",
-                f"- Wall time: {result.metrics.wall_time_seconds:.2f}s",
-                "",
-                "### Evidence",
-                f"- Total items: {len(result.evidence_bundle.evidence)}",
-                "",
-                f"*Use `export_result('{recipe_id}')` to save the full result bundle.*",
-            ]
-            return "\n".join(parts)
-
-        @_tool()
-        async def export_result(
-            recipe_id: str = "default",
-            path: str = "aleph_result.json",
-            include_trace: bool = True,
-            confirm: bool = False,
-            output: Literal["json", "markdown", "object"] = "json",
-        ) -> str | dict[str, Any]:
-            """Export a recipe result to a file.
-
-            Produces a JSON file with the complete reproducible result:
-            recipe config, answer, metrics, evidence bundle, and execution trace.
-
-            Args:
-                recipe_id: Recipe identifier
-                path: Output file path
-                include_trace: Whether to include the execution trace
-                confirm: Required if actions are enabled
-
-            Returns:
-                Confirmation with file path and size
-            """
-            err = _require_actions(confirm)
-            if err:
-                return _format_error(err, output=output)
-
-            if recipe_id not in self._recipe_results:
-                return _format_error(
-                    f"No finalized result for recipe '{recipe_id}'. Use finalize_recipe first.",
-                    output=output,
-                )
-
-            result = self._recipe_results[recipe_id]
-
-            try:
-                p = _scoped_path(
-                    self.action_config.workspace_root,
-                    path,
-                    self.action_config.workspace_mode,
-                )
-            except Exception as e:
-                return _format_error(str(e), output=output)
-
-            data = result.to_dict()
-            if not include_trace:
-                data["trace"] = []
-
-            content = json.dumps(data, indent=2, ensure_ascii=False)
-            content_bytes = content.encode("utf-8")
-
-            if len(content_bytes) > self.action_config.max_write_bytes:
-                return _format_error(
-                    f"Result too large to export (>{self.action_config.max_write_bytes} bytes)",
-                    output=output,
-                )
-
-            p.parent.mkdir(parents=True, exist_ok=True)
-            with open(p, "wb") as f:
-                f.write(content_bytes)
-
-            return _format_payload({
-                "path": str(p),
-                "bytes_written": len(content_bytes),
-                "recipe_id": recipe_id,
-                "evidence_count": len(result.evidence_bundle.evidence),
-            }, output=output)
-
-        @_tool()
-        async def sign_evidence(
-            recipe_id: str = "default",
-            signer_id: str = "local",
-            output: Literal["json", "markdown", "object"] = "markdown",
-        ) -> str | dict[str, Any]:
-            """Sign an evidence bundle for verification.
-
-            Creates a cryptographic hash of the evidence bundle that can be
-            verified later to ensure the evidence hasn't been tampered with.
-
-            Note: This is a content hash signature, not a PKI signature.
-            For full PKI signing, use an external signing service.
-
-            Args:
-                recipe_id: Recipe identifier
-                signer_id: Identifier for the signer
-                output: Output format
-
-            Returns:
-                Signed bundle summary with hash
-            """
-            if recipe_id not in self._recipe_results:
-                return _format_error(
-                    f"No finalized result for recipe '{recipe_id}'. Use finalize_recipe first.",
-                    output=output,
-                )
-
-            result = self._recipe_results[recipe_id]
-            bundle = result.evidence_bundle
-
-            # Compute content hash as signature
-            bundle.signature = bundle.compute_hash()
-            bundle.signed_at = datetime.now().isoformat()
-            bundle.signed_by = signer_id
-
-            if output in {"json", "object"}:
-                return _format_payload(
-                    {
-                        "recipe_id": recipe_id,
-                        "signature": bundle.signature,
-                        "signed_at": bundle.signed_at,
-                        "signed_by": bundle.signed_by,
-                        "evidence_count": len(bundle.evidence),
-                    },
-                    output=output,
-                )
-
-            parts = [
-                "## Evidence Bundle Signed",
-                "",
-                f"**Recipe ID:** `{recipe_id}`",
-                f"**Signature:** `{bundle.signature}`",
-                f"**Signed At:** {bundle.signed_at}",
-                f"**Signed By:** {bundle.signed_by}",
-                f"**Evidence Items:** {len(bundle.evidence)}",
-                "",
-                "*This hash can be used to verify the evidence bundle hasn't been modified.*",
-            ]
-            return "\n".join(parts)
-
-        @_tool()
-        async def list_recipes(
-            output: Literal["json", "markdown", "object"] = "json",
-        ) -> str | dict[str, Any]:
-            """List all loaded recipes and their status.
-
-            Returns:
-                List of recipes with their current state
-            """
-            items = []
-            for rid, runner in self._recipes.items():
-                finalized = rid in self._recipe_results
-                items.append({
-                    "recipe_id": rid,
-                    "query": runner.config.query[:100],
-                    "datasets": len(runner.config.datasets),
-                    "iterations": runner.metrics.iterations,
-                    "evidence_count": runner.metrics.evidence_count,
-                    "finalized": finalized,
-                })
-
-            if output in {"json", "object"}:
-                return _format_payload({"count": len(items), "items": items}, output=output)
-
-            if not items:
-                return "No recipes loaded. Use `load_recipe` to load an Alephfile."
-
-            parts = ["## Loaded Recipes", ""]
-            for item in items:
-                status = "✓ finalized" if item["finalized"] else "⏳ in progress"
-                parts.append(f"- `{item['recipe_id']}`: {status}")
-                parts.append(f"  - Query: {item['query']}")
-                parts.append(f"  - Datasets: {item['datasets']} | Iterations: {item['iterations']} | Evidence: {item['evidence_count']}")
-
-            return "\n".join(parts)
-
     async def run(self, transport: str = "stdio") -> None:
         """Run the MCP server."""
         if transport != "stdio":
@@ -2904,6 +2439,12 @@ def main() -> None:
         default=1_000_000_000,
         help="Max file size in bytes for load_file/read_file (default: 1GB). Increase based on your RAM—the LLM only sees query results.",
     )
+    parser.add_argument(
+        "--max-write-bytes",
+        type=int,
+        default=100_000_000,
+        help="Max file size in bytes for write_file/save_session (default: 100MB).",
+    )
     env_tool_docs = os.environ.get("ALEPH_TOOL_DOCS")
     default_tool_docs = env_tool_docs if env_tool_docs in {"concise", "full"} else DEFAULT_TOOL_DOCS_MODE
     parser.add_argument(
@@ -2927,6 +2468,7 @@ def main() -> None:
         workspace_mode=cast(WorkspaceMode, args.workspace_mode),
         require_confirmation=bool(args.require_confirmation),
         max_read_bytes=args.max_file_size,
+        max_write_bytes=args.max_write_bytes,
     )
 
     server = AlephMCPServerLocal(

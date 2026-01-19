@@ -4,7 +4,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PyPI version](https://img.shields.io/pypi/v/aleph-rlm.svg)](https://pypi.org/project/aleph-rlm/)
 
-Aleph is an MCP (Model Context Protocol) server that enables AI assistants to analyze documents too large for their context window. By implementing a Recursive Language Model (RLM) approach, it allows models to search, explore, and compute over massive datasets without exhausting their token limits.
+Aleph is an MCP (Model Context Protocol) server that enables AI assistants to analyze documents too large for their context window. By implementing a Recursive Language Model (RLM) approach, it allows models to search, explore, and compute over massive datasets without filling up the context window.
 
 ## Key Capabilities
 
@@ -35,8 +35,8 @@ You can load **multiple files or entire repos** as separate contexts and query t
 
 A 50MB log file? The LLM sees ~1KB of search results. A 2GB database dump? Same—just the slices you ask for.
 
-By default, Aleph sets a **1GB max file size** for action tools to avoid accidental overload, but you can raise it with `--max-file-size` based on your machine.
-This cap applies to `load_file` / `read_file`; `load_context` still accepts any size you can supply in-memory.
+By default, Aleph sets a **1GB max file size** for read operations to avoid accidental overload, but you can raise it with `--max-file-size` based on your machine.
+This cap applies to `load_file` / `read_file`; `load_context` still accepts any size you can supply in-memory. Writes default to 100MB via `--max-write-bytes`.
 
 ## Installation
 
@@ -59,6 +59,38 @@ aleph
 ```
 
 Use `--enable-actions` to allow file and command tools.
+
+### Full Power Mode
+
+For maximum capability with minimal setup, use this configuration:
+
+```bash
+aleph --enable-actions --workspace-mode any --tool-docs concise
+```
+
+This enables:
+- **All action tools** (`read_file`, `write_file`, `run_command`, `run_tests`)
+- **Any git repo access** (not limited to a single workspace root)
+- **Concise tool descriptions** (cleaner MCP tool list)
+
+Or in MCP client config:
+
+```json
+{
+  "mcpServers": {
+    "aleph": {
+      "command": "aleph",
+      "args": ["--enable-actions", "--workspace-mode", "any", "--tool-docs", "concise"]
+    }
+  }
+}
+```
+
+For higher limits:
+
+```bash
+aleph --enable-actions --workspace-mode any --tool-docs concise --timeout 120 --max-output 50000
+```
 
 ## Integration
 
@@ -133,7 +165,7 @@ results = [sub_query("Extract key findings.", context_slice=c) for c in chunks]
 final = sub_query("Synthesize into a summary:", context_slice="\n\n".join(results))
 ```
 
-`sub_query` can use an API backend (OpenAI-compatible) or spawn a local CLI (Claude, Codex, Aider) - whichever is available.
+`sub_query` can use an API backend (OpenAI-compatible) or spawn a local CLI (Claude, Codex, Gemini) - whichever is available.
 
 ### Sub-query backends
 
@@ -142,7 +174,7 @@ When `ALEPH_SUB_QUERY_BACKEND` is `auto` (default), Aleph chooses the first avai
 1. **API** - if API credentials are available
 2. **claude CLI** - if installed
 3. **codex CLI** - if installed
-4. **aider CLI** - if installed
+4. **gemini CLI** - if installed
 
 Quick setup:
 
@@ -196,16 +228,6 @@ Aleph exposes the full toolset below.
 | `save_session` | Persist current session to file. |
 | `load_session` | Load a saved session from file. |
 
-### Recipes and reporting
-| Tool | Description |
-|------|-------------|
-| `load_recipe` | Load an Alephfile recipe for execution. |
-| `list_recipes` | List loaded recipes and status. |
-| `finalize_recipe` | Finalize a recipe run and generate a result bundle. |
-| `get_metrics` | Get token-efficiency metrics for a recipe/session. |
-| `export_result` | Export a recipe result bundle to a file. |
-| `sign_evidence` | Sign evidence bundles for verification. |
-
 ### Remote MCP orchestration
 | Tool | Description |
 |------|-------------|
@@ -230,12 +252,14 @@ For full configuration options (limits, budgets, and backend details), see [docs
 
 ## Changelog
 
-### Unreleased
+### 0.5.6
 
-- **Unlimited context architecture**: Clarified that file size is limited by system RAM (with a default 1GB action-tool cap) rather than LLM context windows. Load gigabytes of data and query it with search/peek/lines.
-- Added `--workspace-mode` for action tools (`fixed`, `git`, `any`) to support multi-repo workflows.
-- Added optional `cwd` for `run_tests` to run tests outside the server’s default working directory.
-- Updated MCP setup docs with multi-repo configuration examples.
+- Removed deprecated recipe workflow and aider backend references.
+- Added Gemini CLI sub-query backend and updated backend priority docs.
+- Improved sub-query system prompt for structured output.
+- Added Full Power Mode docs and made installer defaults max power.
+- Added `--max-write-bytes` and aligned file size limits across docs.
+- Clarified action-tool file size caps and workspace mode usage.
 
 ## Development
 

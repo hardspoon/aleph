@@ -2,7 +2,7 @@
 
 The MCP server is an optional feature. Install with:
 
-    pip install aleph[mcp]
+    pip install aleph-rlm[mcp]
 
 Then run:
 

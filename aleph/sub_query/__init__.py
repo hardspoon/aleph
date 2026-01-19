@@ -5,7 +5,7 @@ following the Recursive Language Model (RLM) paradigm.
 
 Backend priority (configurable via ALEPH_SUB_QUERY_BACKEND):
 1. API (if credentials available) - OpenAI-compatible APIs only
-2. CLI backends (claude, codex, aider) - uses existing subscriptions
+2. CLI backends (claude, codex) - uses existing subscriptions
 
 Configuration via environment:
 - ALEPH_SUB_QUERY_API_KEY (or OPENAI_API_KEY fallback)
@@ -28,7 +28,7 @@ __all__ = [
 ]
 
 
-BackendType = Literal["claude", "codex", "aider", "api", "auto"]
+BackendType = Literal["claude", "codex", "gemini", "api", "auto"]
 
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_API_KEY_ENV = "ALEPH_SUB_QUERY_API_KEY"
@@ -42,7 +42,7 @@ class SubQueryConfig:
 
     The backend priority can be configured via environment variables:
 
-    - ALEPH_SUB_QUERY_BACKEND: Force a specific backend ("api", "claude", "codex", "aider")
+    - ALEPH_SUB_QUERY_BACKEND: Force a specific backend ("api", "claude", "codex", "gemini")
     - ALEPH_SUB_QUERY_API_KEY: API key for OpenAI-compatible providers (fallback: OPENAI_API_KEY)
     - ALEPH_SUB_QUERY_URL: Base URL for OpenAI-compatible APIs (fallback: OPENAI_BASE_URL)
     - ALEPH_SUB_QUERY_MODEL: Model name (required)
@@ -51,7 +51,7 @@ class SubQueryConfig:
     1. API - if API credentials are available
     2. claude CLI - if installed
     3. codex CLI - if installed
-    4. aider CLI - if installed
+    4. gemini CLI - if installed
 
     Attributes:
         backend: Which backend to use. "auto" prioritizes API, then CLI.
@@ -85,10 +85,21 @@ class SubQueryConfig:
 
     # System prompt for sub-queries
     system_prompt: str = field(
-        default="""You are a focused sub-agent analyzing a specific portion of a larger document.
-Your task is to answer the question based ONLY on the provided context.
-Be concise and precise. If the context doesn't contain enough information to answer, say so.
-Do not make up information not present in the context."""
+        default="""You are a focused sub-agent processing a single task. This is a one-shot operation.
+
+INSTRUCTIONS:
+1. Answer the question based ONLY on the provided context
+2. Be concise - provide direct answers without preamble
+3. If context is insufficient, say "INSUFFICIENT_CONTEXT: [what's missing]"
+4. Structure your response for easy parsing:
+   - For summaries: bullet points or numbered lists
+   - For extractions: key: value format
+   - For analysis: clear sections with headers
+5. Do not make up information not present in the context
+
+OUTPUT FORMAT:
+- Start directly with your answer (no "Based on the context..." preamble)
+- End with a confidence indicator if uncertain: [CONFIDENCE: high/medium/low]"""
     )
 
 
@@ -111,8 +122,7 @@ def detect_backend(config: SubQueryConfig | None = None) -> BackendType:
     2. api - if API credentials are available
     3. claude CLI - if installed
     4. codex CLI - if installed
-    5. aider CLI - if installed
-    6. api (fallback) - will error if no credentials, but gives helpful message
+    5. api (fallback) - will error if no credentials, but gives helpful message
 
     Returns:
         The detected backend type.
@@ -121,7 +131,7 @@ def detect_backend(config: SubQueryConfig | None = None) -> BackendType:
 
     # Check for explicit backend override
     explicit_backend = os.environ.get("ALEPH_SUB_QUERY_BACKEND", "").lower().strip()
-    if explicit_backend in ("api", "claude", "codex", "aider"):
+    if explicit_backend in ("api", "claude", "codex", "gemini"):
         return explicit_backend  # type: ignore
 
     # Prefer API if explicit model is set and credentials exist
@@ -137,8 +147,8 @@ def detect_backend(config: SubQueryConfig | None = None) -> BackendType:
         return "claude"
     if shutil.which("codex"):
         return "codex"
-    if shutil.which("aider"):
-        return "aider"
+    if shutil.which("gemini"):
+        return "gemini"
 
     # Fallback to API (will error with helpful message if no credentials)
     return "api"

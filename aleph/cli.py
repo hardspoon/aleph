@@ -243,7 +243,7 @@ CLIENTS: dict[str, ClientConfig] = {
 # The JSON configuration to inject
 ALEPH_MCP_CONFIG = {
     "command": "aleph",
-    "args": ["--enable-actions", "--tool-docs", "concise"],
+    "args": ["--enable-actions", "--workspace-mode", "any", "--tool-docs", "concise"],
 }
 
 
@@ -460,7 +460,7 @@ def install_to_toml_config(
     block = (
         "[mcp_servers.aleph]\n"
         "command = \"aleph\"\n"
-        "args = [\"--enable-actions\", \"--tool-docs\", \"concise\"]\n"
+        "args = [\"--enable-actions\", \"--workspace-mode\", \"any\", \"--tool-docs\", \"concise\"]\n"
     )
 
     if dry_run:
@@ -632,13 +632,25 @@ def install_to_claude_code(dry_run: bool = False) -> bool:
 
     if dry_run:
         print_info(
-            f"[DRY RUN] Would run: {claude_exe} mcp add aleph aleph -- --enable-actions --tool-docs concise"
+            f"[DRY RUN] Would run: {claude_exe} mcp add aleph aleph -- --enable-actions --workspace-mode any --tool-docs concise"
         )
         return True
 
     try:
         result = subprocess.run(
-            [claude_exe, "mcp", "add", "aleph", "aleph", "--", "--enable-actions", "--tool-docs", "concise"],
+            [
+                claude_exe,
+                "mcp",
+                "add",
+                "aleph",
+                "aleph",
+                "--",
+                "--enable-actions",
+                "--workspace-mode",
+                "any",
+                "--tool-docs",
+                "concise",
+            ],
             capture_output=True,
             text=True,
             timeout=30,

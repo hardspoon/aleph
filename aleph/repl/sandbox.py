@@ -40,6 +40,9 @@ DEFAULT_ALLOWED_IMPORTS: list[str] = [
     "json",
     "csv",
     "math",
+    "mpmath",
+    "decimal",
+    "fractions",
     "statistics",
     "collections",
     "itertools",
@@ -53,6 +56,11 @@ DEFAULT_ALLOWED_IMPORTS: list[str] = [
     "base64",
     "urllib.parse",
     "html",
+    # Scientific computing (added for heavy mathematical work)
+    "numpy",
+    "scipy",
+    "sympy",
+    "networkx",
 ]
 
 

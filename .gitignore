@@ -35,3 +35,11 @@ texput.log
 # Aleph local workspace (sessions, per-user)
 .aleph/
 tmp/
+
+# Deployment / debug logs
+wrangler.toml
+firebase-debug.log
+
+# Research docs (local only)
+docs/*.pdf
+docs/*.txt

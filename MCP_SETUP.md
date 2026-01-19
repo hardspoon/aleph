@@ -3,12 +3,41 @@
 This guide explains how to properly configure aleph as an MCP server in **all major MCP-compatible clients**: Cursor, VS Code, Claude Desktop, OpenAI Codex, Windsurf, and others.
 It focuses on `aleph`, which supports action tools and workspace scoping.
 
+## Quick Start (Full Power Mode)
+
+For maximum capability without needing to configure workspace roots:
+
+```json
+{
+  "mcpServers": {
+    "aleph": {
+      "command": "aleph",
+      "args": ["--enable-actions", "--workspace-mode", "any", "--tool-docs", "concise"]
+    }
+  }
+}
+```
+
+This enables:
+- **All action tools** (`read_file`, `write_file`, `run_command`, `run_tests`)
+- **Any git repo access** (not limited to a single workspace root)
+- **Concise tool descriptions** (cleaner MCP tool list)
+
+For even higher limits:
+```json
+{
+  "args": ["--enable-actions", "--workspace-mode", "any", "--tool-docs", "concise", "--timeout", "120", "--max-output", "50000"]
+}
+```
+
+If you need stricter workspace scoping (single project only), continue below.
+
 ## The Workspace Root Issue
 
 **Problem:** The aleph MCP server defaults to using the current working directory as the workspace root. If you launch Cursor/VS Code from your home directory, aleph will block file operations with:
 
 ```
-Error: Path '/Volumes/VIXinSSD/aleph/aleph/mcp/local_server.py' escapes workspace root '/Users/hunterbown'
+Error: Path '/path/to/your-project/aleph/mcp/local_server.py' escapes workspace root '/path/to/your-home'
 ```
 
 **Solution:** Explicitly set the workspace root in your MCP configuration.
@@ -24,7 +53,7 @@ Create or edit `.cursor/mcp.json`:
       "command": "aleph",
       "args": [
         "--workspace-root",
-        "/Volumes/VIXinSSD/aleph",
+        "/path/to/your-project",
         "--enable-actions",
         "--tool-docs",
         "concise"
@@ -45,7 +74,7 @@ Create or edit `.vscode/mcp.json`:
       "command": "aleph",
       "args": [
         "--workspace-root",
-        "/Volumes/VIXinSSD/aleph",
+        "/path/to/your-project",
         "--enable-actions",
         "--tool-docs",
         "concise"
@@ -76,7 +105,7 @@ Add to `~/.claude/settings.json`:
       "command": "aleph",
       "args": [
         "--workspace-root",
-        "/Volumes/VIXinSSD/aleph",
+        "/path/to/your-project",
         "--enable-actions",
         "--tool-docs",
         "concise"
@@ -112,7 +141,7 @@ To enable actions (read_file, write_file, etc.), use:
 ```toml
 [mcp_servers.aleph]
 command = "aleph"
-args = ["--workspace-root", "/Volumes/VIXinSSD/aleph", "--enable-actions", "--tool-docs", "concise"]
+args = ["--workspace-root", "/path/to/your-project", "--enable-actions", "--tool-docs", "concise"]
 ```
 
 ### Installing Codex Skill
@@ -137,8 +166,8 @@ These parameters apply to `aleph`:
 - `--timeout <seconds>` - Sandbox execution timeout (default: 30)
 - `--max-output <chars>` - Maximum output characters from commands (default: 10000)
 - `--tool-docs <concise|full>` - Tool description verbosity for MCP clients (default: concise). Set `ALEPH_TOOL_DOCS=full` for full docs.
-- `--max-read-bytes <bytes>` - Maximum file read size (default: 1000000)
-- `--max-write-bytes <bytes>` - Maximum file write size (default: 1000000)
+- `--max-file-size <bytes>` - Maximum file size for read operations (default: 1000000000)
+- `--max-write-bytes <bytes>` - Maximum file size for write operations (default: 100000000)
 
 ## Sub-query backends
 
@@ -147,7 +176,7 @@ These parameters apply to `aleph`:
 1. **API** - if API credentials are available
 2. **claude CLI** - if installed
 3. **codex CLI** - if installed
-4. **aider CLI** - if installed
+4. **gemini CLI** - if installed
 
 ### API Configuration
 
@@ -185,7 +214,7 @@ export ALEPH_SUB_QUERY_MODEL=llama3.2
 
 | Environment Variable | Description |
 |---------------------|-------------|
-| `ALEPH_SUB_QUERY_BACKEND` | Force backend: `api`, `claude`, `codex`, `aider` |
+| `ALEPH_SUB_QUERY_BACKEND` | Force backend: `api`, `claude`, `codex`, `gemini` |
 | `ALEPH_SUB_QUERY_API_KEY` | API key (fallback: `OPENAI_API_KEY`) |
 | `ALEPH_SUB_QUERY_URL` | API base URL (fallback: `OPENAI_BASE_URL`) |
 | `ALEPH_SUB_QUERY_MODEL` | Model name (required for API backend) |
@@ -290,8 +319,8 @@ Customize limits for your use case:
         "concise",
         "--timeout", "60",
         "--max-output", "50000",
-        "--max-read-bytes", "5000000",
-        "--max-write-bytes", "5000000"
+        "--max-file-size", "5000000000",
+        "--max-write-bytes", "500000000"
       ]
     }
   }
@@ -301,8 +330,8 @@ Customize limits for your use case:
 Default limits:
 - Timeout: 30 seconds
 - Max command output: 10,000 characters
-- Max file read: 1,000,000 bytes (1MB)
-- Max file write: 1,000,000 bytes (1MB)
+- Max file read: 1,000,000,000 bytes (1GB)
+- Max file write: 100,000,000 bytes (100MB)
 
 ### Scenario 5: Any Git Repo
 
@@ -369,8 +398,8 @@ Customize limits for your use case:
     "concise",
     "--timeout", "60",
     "--max-output", "50000",
-    "--max-read-bytes", "5000000",
-    "--max-write-bytes", "5000000"
+    "--max-file-size", "5000000000",
+    "--max-write-bytes", "500000000"
   ]
 }
 ```
@@ -378,8 +407,8 @@ Customize limits for your use case:
 Default limits:
 - Timeout: 30 seconds
 - Max command output: 10,000 characters
-- Max file read: 1,000,000 bytes (1MB)
-- Max file write: 1,000,000 bytes (1MB)
+- Max file read: 1,000,000,000 bytes (1GB)
+- Max file write: 100,000,000 bytes (100MB)
 
 ## Troubleshooting
 
@@ -401,7 +430,7 @@ If you intentionally want multi-repo access, use `--workspace-mode git` or `--wo
     "aleph": {
       "args": [
         "--workspace-root",
-        "/Volumes/VIXinSSD/aleph",
+        "/path/to/your-project",
         "--enable-actions",
         "--tool-docs",
         "concise"
@@ -418,7 +447,7 @@ If you intentionally want multi-repo access, use `--workspace-mode git` or `--wo
     "aleph": {
       "args": [
         "--workspace-root",
-        "/Volumes/VIXinSSD/aleph",
+        "/path/to/your-project",
         "--enable-actions",
         "--tool-docs",
         "concise"
@@ -435,7 +464,7 @@ If you intentionally want multi-repo access, use `--workspace-mode git` or `--wo
     "aleph": {
       "args": [
         "--workspace-root",
-        "/Volumes/VIXinSSD/aleph",
+        "/path/to/your-project",
         "--enable-actions",
         "--tool-docs",
         "concise"
@@ -449,7 +478,7 @@ If you intentionally want multi-repo access, use `--workspace-mode git` or `--wo
 ```toml
 [mcp_servers.aleph]
 command = "aleph"
-args = ["--workspace-root", "/Volumes/VIXinSSD/aleph", "--enable-actions", "--tool-docs", "concise"]
+args = ["--workspace-root", "/path/to/your-project", "--enable-actions", "--tool-docs", "concise"]
 ```
 
 ### "Actions are disabled" Error
@@ -473,7 +502,7 @@ All clients require adding `--enable-actions`:
 **Symptom:** Tools don't appear in Cursor/VS Code.
 
 **Possible causes:**
-1. aleph not installed: `pip install aleph[mcp]`
+1. aleph not installed: `pip install aleph-rlm[mcp]`
 2. Entry point not available: Run `aleph --help` to test
 3. Python not in PATH: Use full path to python/python3
 4. Workspace root path incorrect
@@ -485,7 +514,7 @@ All clients require adding `--enable-actions`:
 aleph --help
 
 # Check installation
-pip show aleph
+pip show aleph-rlm
 
 # Test server manually
 python3 -m aleph.mcp.server --help
@@ -528,7 +557,7 @@ Windsurf uses standard MCP configuration files. Add to your MCP settings:
       "command": "aleph",
       "args": [
         "--workspace-root",
-        "/Volumes/VIXinSSD/aleph",
+        "/path/to/your-project",
         "--enable-actions",
         "--tool-docs",
         "concise"

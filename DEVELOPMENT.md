@@ -14,7 +14,6 @@ aleph/
 ├── types.py             # Dataclasses: Budget, AlephResponse, TrajectoryStep, etc.
 ├── config.py            # AlephConfig, create_aleph() factory
 ├── cli.py               # CLI entry points (aleph-rlm install/doctor)
-├── recipe.py            # Alephfile/recipe support for reproducible runs
 ├── mcp/
 │   ├── local_server.py  # MCP server (main entry point)
 │   └── server.py        # Compatibility entry point (aliases local_server)
@@ -23,7 +22,7 @@ aleph/
 │   └── helpers.py       # 80+ helper functions (peek, search, extract_*, etc.)
 ├── sub_query/
 │   ├── __init__.py      # SubQueryConfig, detect_backend()
-│   ├── cli_backend.py   # Claude/Codex/Aider CLI spawning
+│   ├── cli_backend.py   # Claude/Codex CLI spawning
 │   └── api_backend.py   # OpenAI-compatible API calls
 ├── providers/
 │   ├── base.py          # LLMProvider protocol
@@ -69,7 +68,6 @@ The primary entry point for IDE integration. Exposes tools:
 - **Sub-queries:** `sub_query` (RLM-style recursive calls)
 - **Reasoning:** `think`, `evaluate_progress`, `summarize_so_far`
 - **Output:** `finalize`, `get_evidence`, `get_status`
-- **Recipes:** `load_recipe`, `finalize_recipe`, `export_result`
 - **Actions:** `run_command`, `read_file`, `write_file`, `run_tests`
 
 ### Sandbox (`repl/sandbox.py`)
@@ -93,7 +91,7 @@ Enables RLM-style recursive reasoning:
 # 2. API (if ALEPH_SUB_QUERY_API_KEY or OPENAI_API_KEY set)
 # 3. claude CLI (if installed)
 # 4. codex CLI (if installed)
-# 5. aider CLI (if installed)
+# 5. gemini CLI (if installed)
 ```
 
 **CLI backend:** Spawns subprocess, passes prompt via stdin or temp file
@@ -233,7 +231,7 @@ HELPER_FUNCTIONS = {
 
 | Variable | Purpose |
 |----------|---------|
-| `ALEPH_SUB_QUERY_BACKEND` | Force sub-query backend: `api`, `claude`, `codex`, `aider` |
+| `ALEPH_SUB_QUERY_BACKEND` | Force sub-query backend: `api`, `claude`, `codex`, `gemini` |
 | `ALEPH_SUB_QUERY_API_KEY` | API key (fallback: `OPENAI_API_KEY`) |
 | `ALEPH_SUB_QUERY_URL` | API base URL (fallback: `OPENAI_BASE_URL`) |
 | `ALEPH_SUB_QUERY_MODEL` | Model name (required for API backend) |
