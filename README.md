@@ -4,11 +4,11 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PyPI version](https://img.shields.io/pypi/v/aleph-rlm.svg)](https://pypi.org/project/aleph-rlm/)
 
-Aleph is an MCP (Model Context Protocol) server that lets an LLM search and compute over large local data without loading the full data into the model context.
+Aleph implements the [Recursive Language Model](https://arxiv.org/abs/2512.24601) (RLM) architecture—an MCP server that gives Claude (or any LLM) access to unlimited local context.
 
-It keeps loaded content in a long-lived Python process (RAM) and exposes tools like regex search, slicing, and sandboxed Python execution. Only tool results are returned to the model.
+**Your RAM is the new context window.** Load gigabytes of logs, codebases, or data dumps into a Python process. The model queries it via search, slicing, and sandboxed code execution. Only the results enter context—never the raw file.
 
-Works with any text (and JSON): logs, codebases, data dumps, API responses, and other large outputs.
+Use `/aleph` in Claude Code to start, or configure any MCP client.
 
 ## Quickstart
 
