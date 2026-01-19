@@ -11,7 +11,6 @@ This guide covers all configuration options for Aleph, including environment var
 | `ALEPH_SUB_QUERY_URL` | API base URL (fallback: `OPENAI_BASE_URL`) | `https://api.openai.com/v1` |
 | `ALEPH_SUB_QUERY_MODEL` | Model name (required for API) | -- |
 | `ALEPH_MAX_ITERATIONS` | Maximum iterations per session | `100` |
-| `ALEPH_MAX_COST` | Maximum cost in USD | `1.0` |
 
 ## Sub-Query Configuration
 
@@ -122,7 +121,7 @@ aleph
 aleph --enable-actions --tool-docs concise
 
 # Custom timeout and output limits
-aleph --timeout 60 --max-output 20000
+aleph --timeout 60 --max-output 100000
 
 # Custom file size limits (read/write)
 aleph --enable-actions --max-file-size 2000000000 --max-write-bytes 200000000
@@ -139,6 +138,15 @@ aleph --enable-actions --tool-docs concise --workspace-mode git
 # Full tool docs (larger MCP tool list payload)
 aleph --tool-docs full
 ```
+
+## Power Features (Default When Actions Enabled)
+
+- `rg_search`: fast repo search (uses ripgrep if available)
+- `semantic_search`: meaning-based search over loaded contexts
+- `load_file`: smart loaders for PDF/DOCX/HTML/logs (+ .gz/.bz2/.xz)
+- Memory packs: auto-save to `.aleph/memory_pack.json` and auto-load on startup
+- Memory packs: `save_session(context_id="*")` and `load_session(path=...)` for manual control
+- `tasks`: lightweight task tracking per context
 
 ### MCP Client Configuration
 
@@ -175,8 +183,8 @@ The Python sandbox can be configured programmatically:
 from aleph.repl.sandbox import SandboxConfig, REPLEnvironment
 
 config = SandboxConfig(
-    timeout_seconds=30.0,      # Code execution timeout
-    max_output_chars=10000,    # Truncate output after this
+    timeout_seconds=60.0,      # Code execution timeout
+    max_output_chars=50000,    # Truncate output after this
 )
 
 repl = REPLEnvironment(
@@ -213,7 +221,6 @@ from aleph.types import Budget
 
 budget = Budget(
     max_tokens=100_000,        # Total token limit
-    max_cost_usd=1.0,          # Cost limit
     max_iterations=100,        # Iteration limit
     max_depth=5,               # Sub-query recursion depth
     max_wall_time_seconds=300, # Wall clock timeout
@@ -238,7 +245,6 @@ ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
 
 # Resource limits
 ALEPH_MAX_ITERATIONS=100
-ALEPH_MAX_COST=1.0
 
 # MCP remote tool timeout (seconds)
 ALEPH_REMOTE_TOOL_TIMEOUT=120
@@ -279,7 +285,7 @@ aleph --timeout 120
 
 Increase the output limit:
 ```bash
-aleph --max-output 50000
+aleph --max-output 100000
 ```
 
 ### Actions disabled

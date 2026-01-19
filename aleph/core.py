@@ -74,7 +74,7 @@ class Aleph:
             provider: LLM provider instance or provider name.
             root_model: Model used for the root loop.
             sub_model: Model used for sub-queries/sub-aleph (defaults to root_model).
-            budget: Resource limits (tokens/cost/iterations/depth/wall-time).
+            budget: Resource limits (tokens/iterations/depth/wall-time/sub-queries).
             sandbox_config: REPL sandbox limits and allowed imports.
             system_prompt: Custom system prompt template.
             enable_caching: Enable memoization for sub-queries.
@@ -239,7 +239,7 @@ class Aleph:
 
         messages = self._build_initial_messages(query, meta)
 
-        max_iterations = budget.max_iterations or 50
+        max_iterations = budget.max_iterations or 100
         local_iterations = 0
 
         max_depth_reached = depth

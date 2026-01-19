@@ -8,6 +8,8 @@ The REPL injects wrappers so that the LLM can call these directly.
 
 from __future__ import annotations
 
+import hashlib
+import math
 import re
 from collections import Counter
 from typing import TypedDict, Any, Callable, Sequence, Iterable
@@ -360,6 +362,22 @@ def extract_comments(ctx: object, lang: str = "python") -> list[ExtractedMatch]:
     }
     pattern = patterns.get(lang.lower(), patterns["python"])
     return _extract_with_pattern(ctx, pattern, flags=re.MULTILINE)
+
+
+def extract_routes(ctx: object, lang: str = "auto") -> list[ExtractedMatch]:
+    """Extract route definitions from common web frameworks."""
+    patterns = {
+        "python": r'@(?:app|router)\.(?:get|post|put|delete|patch|options|head)\(\s*["\'][^"\']+',
+        "django": r'\b(?:path|re_path)\(\s*r?["\'][^"\']+',
+        "javascript": r'\b(?:app|router)\.(?:get|post|put|delete|patch|options|head|use)\(\s*["\'][^"\']+',
+        "ruby": r'\b(?:get|post|put|delete|patch|match)\s+["\'][^"\']+',
+    }
+    key = lang.lower().strip() if isinstance(lang, str) else "auto"
+    if key in patterns:
+        pattern = patterns[key]
+    else:
+        pattern = "|".join(f"({p})" for p in patterns.values())
+    return _extract_with_pattern(ctx, pattern, flags=re.IGNORECASE | re.MULTILINE)
 
 
 def extract_strings(ctx: object) -> list[ExtractedMatch]:
@@ -730,6 +748,75 @@ def first_match(ctx: object, pattern: str, flags: int = 0) -> str | None:
     text = _to_text(ctx)
     match = re.search(pattern, text, flags=flags)
     return match.group(0) if match else None
+
+
+# =============================================================================
+# Semantic search (lightweight embeddings)
+# =============================================================================
+
+def _tokenize(text: str) -> list[str]:
+    return re.findall(r"[A-Za-z0-9_]+", text.lower())
+
+
+def embed_text(text: str, dim: int = 256) -> list[float]:
+    """Create a lightweight hashed embedding for text."""
+    if dim <= 0:
+        raise ValueError("dim must be > 0")
+    vec = [0.0] * dim
+    for token in _tokenize(text):
+        if len(token) < 2:
+            continue
+        digest = hashlib.blake2b(token.encode("utf-8"), digest_size=4).digest()
+        idx = int.from_bytes(digest, "little") % dim
+        vec[idx] += 1.0
+    norm = math.sqrt(sum(v * v for v in vec))
+    if norm > 0:
+        vec = [v / norm for v in vec]
+    return vec
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    return sum(x * y for x, y in zip(a, b))
+
+
+def semantic_search(
+    ctx: object,
+    query: str,
+    chunk_size: int = 1000,
+    overlap: int = 100,
+    top_k: int = 5,
+    embed_dim: int = 256,
+) -> list[dict[str, Any]]:
+    """Semantic search over context using lightweight embeddings."""
+    if not query:
+        return []
+    chunks = chunk(ctx, chunk_size, overlap)
+    if not chunks:
+        return []
+    q_vec = embed_text(query, dim=embed_dim)
+
+    results: list[dict[str, Any]] = []
+    pos = 0
+    for i, chunk_text in enumerate(chunks):
+        c_vec = embed_text(chunk_text, dim=embed_dim)
+        score = _cosine_similarity(q_vec, c_vec)
+        start_char = pos
+        end_char = pos + len(chunk_text)
+        results.append({
+            "index": i,
+            "score": score,
+            "start_char": start_char,
+            "end_char": end_char,
+            "preview": chunk_text[:200] + ("..." if len(chunk_text) > 200 else ""),
+        })
+        pos += len(chunk_text) - overlap if i < len(chunks) - 1 else len(chunk_text)
+
+    results.sort(key=lambda r: r["score"], reverse=True)
+    if top_k <= 0:
+        return []
+    return results[:top_k]
 
 
 # =============================================================================

@@ -166,8 +166,7 @@ class Budget:
     """Resource limits for an Aleph call."""
 
     max_tokens: int | None = None
-    max_cost_usd: float | None = None
-    max_iterations: int | None = 50
+    max_iterations: int | None = 100
     max_depth: int | None = 2
     max_wall_time_seconds: float | None = 300.0
     max_sub_queries: int | None = 100
@@ -189,9 +188,6 @@ class BudgetStatus:
 
         if budget.max_tokens is not None and self.tokens_used > budget.max_tokens:
             return True, f"Token budget exceeded: used {self.tokens_used} > max {budget.max_tokens}"
-
-        if budget.max_cost_usd is not None and self.cost_used > budget.max_cost_usd:
-            return True, f"Cost budget exceeded: used ${self.cost_used:.4f} > max ${budget.max_cost_usd:.4f}"
 
         if budget.max_iterations is not None and self.iterations_used > budget.max_iterations:
             return True, f"Iteration budget exceeded: used {self.iterations_used} > max {budget.max_iterations}"

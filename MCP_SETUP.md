@@ -26,7 +26,7 @@ This enables:
 For even higher limits:
 ```json
 {
-  "args": ["--enable-actions", "--workspace-mode", "any", "--tool-docs", "concise", "--timeout", "120", "--max-output", "50000"]
+  "args": ["--enable-actions", "--workspace-mode", "any", "--tool-docs", "concise", "--timeout", "120", "--max-output", "100000"]
 }
 ```
 
@@ -211,8 +211,8 @@ These parameters apply to `aleph`:
 - `--workspace-mode <fixed|git|any>` - Path scope for actions: `fixed` (workspace root only), `git` (any git repo), `any` (no path restriction)
 - `--enable-actions` - Enable action tools (read_file, write_file, run_command, run_tests, etc.)
 - `--require-confirmation` - Require `confirm=true` on all action tool calls
-- `--timeout <seconds>` - Sandbox execution timeout (default: 30)
-- `--max-output <chars>` - Maximum output characters from commands (default: 10000)
+- `--timeout <seconds>` - Sandbox execution timeout (default: 60)
+- `--max-output <chars>` - Maximum output characters from commands (default: 50000)
 - `--tool-docs <concise|full>` - Tool description verbosity for MCP clients (default: concise). Set `ALEPH_TOOL_DOCS=full` for full docs.
 - `--max-file-size <bytes>` - Maximum file size for read operations (default: 1000000000)
 - `--max-write-bytes <bytes>` - Maximum file size for write operations (default: 100000000)
@@ -370,7 +370,7 @@ Customize limits for your use case:
         "--tool-docs",
         "concise",
         "--timeout", "60",
-        "--max-output", "50000",
+        "--max-output", "100000",
         "--max-file-size", "5000000000",
         "--max-write-bytes", "500000000"
       ]
@@ -380,8 +380,8 @@ Customize limits for your use case:
 ```
 
 Default limits:
-- Timeout: 30 seconds
-- Max command output: 10,000 characters
+- Timeout: 60 seconds
+- Max command output: 50,000 characters
 - Max file read: 1,000,000,000 bytes (1GB)
 - Max file write: 100,000,000 bytes (100MB)
 
@@ -449,7 +449,7 @@ Customize limits for your use case:
     "--tool-docs",
     "concise",
     "--timeout", "60",
-    "--max-output", "50000",
+    "--max-output", "100000",
     "--max-file-size", "5000000000",
     "--max-write-bytes", "500000000"
   ]
@@ -457,8 +457,8 @@ Customize limits for your use case:
 ```
 
 Default limits:
-- Timeout: 30 seconds
-- Max command output: 10,000 characters
+- Timeout: 60 seconds
+- Max command output: 50,000 characters
 - Max file read: 1,000,000,000 bytes (1GB)
 - Max file write: 100,000,000 bytes (100MB)
 

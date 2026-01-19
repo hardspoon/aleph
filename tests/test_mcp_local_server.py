@@ -407,7 +407,7 @@ class TestServerInit:
 
     def test_default_sandbox_config(self):
         server = AlephMCPServerLocal()
-        assert server.sandbox_config.timeout_seconds == 30.0
+        assert server.sandbox_config.timeout_seconds == 60.0
 
 
 # ---------------------------------------------------------------------------

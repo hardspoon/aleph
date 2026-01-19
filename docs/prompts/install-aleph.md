@@ -40,7 +40,7 @@ I need you to install and configure Aleph (an MCP server for recursive LLM reaso
       "mcpServers": {
         "aleph": {
           "command": "aleph",
-          "args": ["--enable-actions", "--tool-docs", "concise", "--workspace-mode", "git"]
+          "args": ["--enable-actions", "--tool-docs", "concise", "--workspace-mode", "any"]
         }
       }
     }
@@ -53,7 +53,7 @@ I need you to install and configure Aleph (an MCP server for recursive LLM reaso
    ```toml
    [mcp_servers.aleph]
    command = "aleph"
-   args = ["--enable-actions", "--tool-docs", "concise", "--workspace-mode", "git"]
+   args = ["--enable-actions", "--tool-docs", "concise", "--workspace-mode", "any"]
    ```
 
    **Gemini CLI** (~/.gemini/mcp.json):
@@ -62,7 +62,7 @@ I need you to install and configure Aleph (an MCP server for recursive LLM reaso
      "mcpServers": {
        "aleph": {
          "command": "aleph",
-         "args": ["--enable-actions", "--tool-docs", "concise", "--workspace-mode", "git"]
+        "args": ["--enable-actions", "--tool-docs", "concise", "--workspace-mode", "any"]
        }
      }
    }
@@ -116,6 +116,7 @@ I need you to install and configure Aleph (an MCP server for recursive LLM reaso
 
 **Important notes:**
 - The `--enable-actions` flag allows file read/write and command execution
+- `--enable-actions` also enables rg-based search, smart loaders, and memory pack auto-save
 - In CLI environments (Claude Code, Codex, Gemini), `sub_query` can use the local CLI backend - no API key needed
 - The installer should handle most of this automatically, but verify each environment works
 - For per-project scoping, set `--workspace-root /absolute/path/to/project` instead of `--workspace-mode git`. See MCP_SETUP.md for details.

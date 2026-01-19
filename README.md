@@ -17,6 +17,8 @@ Based on the [Recursive Language Model](https://arxiv.org/abs/2512.24601) (RLM) 
 | **Large log analysis** | Load 500MB of logs, search for patterns, correlate across time ranges |
 | **Codebase navigation** | Load entire repos, find definitions, trace call chains, extract architecture |
 | **Data exploration** | JSON exports, CSV files, API responses—explore interactively with Python |
+| **Mixed document ingestion** | Load PDFs, Word docs, HTML, and logs like plain text |
+| **Semantic search** | Find relevant sections by meaning, then zoom in with peek |
 | **Research sessions** | Save/resume sessions, track evidence with citations, spawn sub-queries |
 
 ## Requirements
@@ -81,12 +83,15 @@ If using Claude Code, tools are prefixed: `mcp__aleph__get_status`.
 
 The `/aleph` skill is a prompt that teaches your LLM how to use Aleph effectively. It provides workflow patterns, tool guidance, and troubleshooting tips.
 
+**Note:** Aleph works best when paired with the skill prompt + MCP server together.
+
 ### What it does
 
 - Loads files into searchable in-memory contexts
 - Tracks evidence with citations as you reason
+- Supports semantic search and fast rg-based codebase search
 - Enables recursive sub-queries for deep analysis
-- Persists sessions for later resumption
+- Persists sessions for later resumption (memory packs)
 
 ### How to invoke
 
@@ -145,11 +150,11 @@ Copy-Item "$alephPath\..\docs\prompts\aleph.md" "$env:USERPROFILE\.codex\skills\
 └───────────────┘    small results  └────────────────────────┘
 ```
 
-1. Load data via `load_file` or `load_context`
-2. Explore with `search_context`, `peek_context`
-3. Compute with `exec_python` (sandboxed)
-4. Track reasoning with `think`, `get_evidence`
-5. Save progress with `save_session`
+1. **Load** — `load_context` (paste text) or `load_file` (from disk)
+2. **Explore** — `search_context`, `semantic_search`, `peek_context`
+3. **Compute** — `exec_python` with 100+ built-in helpers
+4. **Reason** — `think`, `evaluate_progress`, `get_evidence`
+5. **Persist** — `save_session` to resume later
 
 ### Quick Example
 
@@ -172,10 +177,12 @@ exec_python(code="emails = extract_emails(); print(emails)", context_id="logs")
 ## Tools
 
 **Core** (always available):
-- `load_context`, `list_contexts` — manage in-memory data
-- `search_context`, `peek_context`, `chunk_context` — explore loaded data
+- `load_context`, `list_contexts`, `diff_contexts` — manage in-memory data
+- `search_context`, `semantic_search`, `peek_context`, `chunk_context` — explore loaded data
 - `exec_python`, `get_variable` — compute in sandbox (100+ built-in helpers)
-- `think`, `evaluate_progress`, `get_evidence`, `finalize` — structured reasoning
+- `think`, `evaluate_progress`, `summarize_so_far`, `get_evidence`, `finalize` — structured reasoning
+- `tasks` — lightweight task tracking per context
+- `get_status` — session state
 - `sub_query` — spawn recursive sub-agents
 
 <details>
@@ -197,10 +204,10 @@ Extractors return `list[dict]` with keys: `value`, `line_num`, `start`, `end`.
 </details>
 
 **Action tools** (requires `--enable-actions`):
-- `load_file`, `read_file`, `write_file` — filesystem access
-- `run_command`, `run_tests` — shell execution
-- `save_session`, `load_session` — persist state
-- Remote MCP orchestration tools
+- `load_file`, `read_file`, `write_file` — filesystem (PDFs, Word, HTML, .gz supported)
+- `run_command`, `run_tests`, `rg_search` — shell + fast repo search
+- `save_session`, `load_session` — persist state (memory packs)
+- `add_remote_server`, `list_remote_tools`, `call_remote_tool` — MCP orchestration
 
 ## Configuration
 
@@ -212,8 +219,8 @@ Extractors return `list[dict]` with keys: `value`, `line_num`, `start`, `end`.
 **Limits:**
 - `--max-file-size` — max file read (default: 1GB)
 - `--max-write-bytes` — max file write (default: 100MB)  
-- `--timeout` — sandbox/command timeout (default: 30s)
-- `--max-output` — max command output (default: 10,000 chars)
+- `--timeout` — sandbox/command timeout (default: 60s)
+- `--max-output` — max command output (default: 50,000 chars)
 
 See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for all options.
 

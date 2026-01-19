@@ -26,6 +26,7 @@ AVAILABLE FUNCTIONS (in the REPL):
 - `lines(start=0, end=None)` - View lines [start:end] of the context
 - `search(pattern, context_lines=2, flags=0, max_results=20)` - Regex search returning matches with surrounding context
 - `chunk(chunk_size, overlap=0)` - Split the context into character chunks
+- `semantic_search(query, chunk_size=1000, overlap=100, top_k=5)` - Meaning-based search
 - `sub_query(prompt, context_slice=None)` - Ask a sub-question to another LLM (cheaper model)
 - `sub_aleph(query, context=None)` - Run a recursive Aleph call (higher-level recursion)
 

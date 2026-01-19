@@ -6,16 +6,19 @@ Tools:
 - load_context: Load text/data into sandboxed REPL
 - peek_context: View character/line ranges
 - search_context: Regex search with context
+- semantic_search: Meaning-based search over the context
 - exec_python: Execute Python code in sandbox
 - get_variable: Retrieve variables from REPL
 - sub_query: RLM-style recursive sub-agent queries (CLI or API backend)
 - think: Structure a reasoning sub-step (returns prompt for YOU to reason about)
+- tasks: Lightweight task tracking per context
 - get_status: Show current session state
 - get_evidence: Retrieve collected evidence/citations
 - finalize: Mark task complete with answer
 - chunk_context: Split context into chunks with metadata for navigation
 - evaluate_progress: Self-evaluate progress with convergence tracking
 - summarize_so_far: Compress reasoning history to manage context window
+- rg_search: Fast repo search via ripgrep (action tool)
 
 Usage:
     aleph
@@ -24,19 +27,30 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import bz2
 from contextlib import AsyncExitStack
 import difflib
+import fnmatch
+import gzip
+import importlib
 import inspect
+import io
 import json
+import lzma
 import os
 import re
+import shutil
 import shlex
+import subprocess
 import sys
 import time
+import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Iterable, Literal, cast
+import xml.etree.ElementTree as ET
+from html.parser import HTMLParser
 
 from ..repl.sandbox import REPLEnvironment, SandboxConfig
 from ..types import ContentFormat, ContextMetadata
@@ -94,6 +108,181 @@ def _detect_format(text: str) -> ContentFormat:
     return ContentFormat.TEXT
 
 
+def _detect_format_for_suffix(text: str, suffix: str) -> ContentFormat:
+    ext = suffix.lower()
+    if ext in {".jsonl", ".ndjson"}:
+        return ContentFormat.JSONL
+    if ext == ".csv":
+        return ContentFormat.CSV
+    if ext == ".json":
+        return ContentFormat.JSON if _detect_format(text) == ContentFormat.JSON else ContentFormat.TEXT
+    if ext in {
+        ".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java", ".rb", ".php", ".cs",
+        ".c", ".h", ".cpp", ".hpp",
+    }:
+        return ContentFormat.CODE
+    return _detect_format(text)
+
+
+def _coerce_context_to_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, (dict, list, tuple)):
+        try:
+            return json.dumps(value, ensure_ascii=False, indent=2)
+        except Exception:
+            return str(value)
+    return str(value)
+
+
+def _effective_suffix(path: Path) -> str:
+    suffixes = [s.lower() for s in path.suffixes]
+    if suffixes and suffixes[-1] in {".gz", ".bz2", ".xz"}:
+        return suffixes[-2] if len(suffixes) > 1 else ""
+    return path.suffix.lower()
+
+
+def _decompress_bytes(path: Path, data: bytes) -> tuple[bytes, str | None]:
+    ext = path.suffix.lower()
+    if ext == ".gz":
+        return gzip.decompress(data), "gzip"
+    if ext == ".bz2":
+        return bz2.decompress(data), "bzip2"
+    if ext == ".xz":
+        return lzma.decompress(data), "xz"
+    return data, None
+
+
+class _HTMLTextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self._chunks: list[str] = []
+        self._skip = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"script", "style"}:
+            self._skip = True
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style"}:
+            self._skip = False
+
+    def handle_data(self, data: str) -> None:
+        if self._skip:
+            return
+        stripped = data.strip()
+        if stripped:
+            self._chunks.append(stripped)
+
+    def text(self) -> str:
+        return "\n".join(self._chunks)
+
+
+def _extract_text_from_html(text: str) -> str:
+    parser = _HTMLTextExtractor()
+    parser.feed(text)
+    return parser.text()
+
+
+def _extract_text_from_docx(data: bytes) -> str:
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        xml_bytes = zf.read("word/document.xml")
+    root = ET.fromstring(xml_bytes)
+    paragraphs: list[str] = []
+    for para in root.iter():
+        if not para.tag.endswith("}p"):
+            continue
+        parts: list[str] = []
+        for node in para.iter():
+            if node.tag.endswith("}t") and node.text:
+                parts.append(node.text)
+        if parts:
+            paragraphs.append("".join(parts))
+    return "\n".join(paragraphs)
+
+
+def _extract_text_from_pdf(
+    data: bytes,
+    path: Path | None,
+    timeout_seconds: float,
+) -> tuple[str, str | None]:
+    for module_name in ("pypdf", "PyPDF2"):
+        try:
+            module = importlib.import_module(module_name)
+            reader = module.PdfReader(io.BytesIO(data))
+            pages: list[str] = []
+            for page in reader.pages:
+                try:
+                    page_text = page.extract_text() or ""
+                except Exception:
+                    page_text = ""
+                if page_text:
+                    pages.append(page_text)
+            text = "\n".join(pages).strip()
+            if text:
+                return text, None
+        except Exception:
+            continue
+
+    if path is not None:
+        pdf_tool = shutil.which("pdftotext")
+        if pdf_tool:
+            try:
+                result = subprocess.run(
+                    [pdf_tool, "-layout", str(path), "-"],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout_seconds,
+                )
+            except Exception as e:
+                return "", f"pdftotext failed: {e}"
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout, None
+            stderr = result.stderr.strip()
+            if stderr:
+                return "", f"pdftotext error: {stderr}"
+
+    return "", "PDF extraction unavailable. Install `pypdf` or `pdftotext` for best results."
+
+
+def _load_text_from_path(
+    path: Path,
+    max_bytes: int,
+    timeout_seconds: float,
+) -> tuple[str, ContentFormat, str | None]:
+    data = path.read_bytes()
+    if len(data) > max_bytes:
+        raise ValueError(f"File too large to read (>{max_bytes} bytes): {path}")
+
+    data, compression = _decompress_bytes(path, data)
+    if compression and len(data) > max_bytes:
+        raise ValueError(f"Decompressed file too large (>{max_bytes} bytes): {path}")
+
+    suffix = _effective_suffix(path)
+    warning: str | None = None
+
+    if suffix == ".pdf":
+        text, warning = _extract_text_from_pdf(data, path, timeout_seconds)
+        if not text.strip():
+            raise ValueError(warning or "Failed to extract PDF text")
+    elif suffix == ".docx":
+        try:
+            text = _extract_text_from_docx(data)
+        except Exception as e:
+            raise ValueError(f"Failed to extract DOCX text: {e}") from e
+        if not text.strip():
+            warning = "DOCX extraction produced empty text"
+    elif suffix in {".html", ".htm"}:
+        text = _extract_text_from_html(data.decode("utf-8", errors="replace"))
+    else:
+        text = data.decode("utf-8", errors="replace")
+
+    fmt = _detect_format_for_suffix(text, suffix)
+    return text, fmt, warning
+
+
 def _analyze_text_context(text: str, fmt: ContentFormat) -> ContextMetadata:
     """Analyze text and return metadata."""
     return ContextMetadata(
@@ -123,7 +312,176 @@ class _Session:
     information_gain: list[int] = field(default_factory=list)  # evidence count per iteration
     # Chunk metadata for navigation
     chunks: list[dict] | None = None
+    # Lightweight task tracking
+    tasks: list[dict[str, Any]] = field(default_factory=list)
+    task_counter: int = 0
 
+
+def _session_to_payload(session_id: str, session: _Session) -> dict[str, Any]:
+    ctx_val = session.repl.get_variable("ctx")
+    ctx_text = _coerce_context_to_text(ctx_val)
+    tasks_payload: list[dict[str, Any]] = []
+    for task in session.tasks:
+        if isinstance(task, dict):
+            tasks_payload.append(task)
+
+    return {
+        "schema": "aleph.session.v1",
+        "session_id": session_id,
+        "context_id": session_id,
+        "created_at": session.created_at.isoformat(),
+        "iterations": session.iterations,
+        "line_number_base": session.line_number_base,
+        "meta": {
+            "format": session.meta.format.value,
+            "size_bytes": session.meta.size_bytes,
+            "size_chars": session.meta.size_chars,
+            "size_lines": session.meta.size_lines,
+            "size_tokens_estimate": session.meta.size_tokens_estimate,
+            "structure_hint": session.meta.structure_hint,
+            "sample_preview": session.meta.sample_preview,
+        },
+        "ctx": ctx_text,
+        "think_history": list(session.think_history),
+        "confidence_history": list(session.confidence_history),
+        "information_gain": list(session.information_gain),
+        "chunks": session.chunks,
+        "tasks": tasks_payload,
+        "task_counter": session.task_counter,
+        "evidence": [
+            {
+                "source": ev.source,
+                "line_range": list(ev.line_range) if ev.line_range else None,
+                "pattern": ev.pattern,
+                "snippet": ev.snippet,
+                "note": ev.note,
+                "timestamp": ev.timestamp.isoformat(),
+            }
+            for ev in session.evidence
+        ],
+    }
+
+
+def _session_from_payload(
+    obj: dict[str, Any],
+    resolved_id: str,
+    sandbox_config: SandboxConfig,
+    loop: asyncio.AbstractEventLoop | None,
+) -> _Session:
+    ctx = obj.get("ctx")
+    if not isinstance(ctx, str):
+        raise ValueError("Invalid session payload: ctx must be a string")
+
+    meta_obj = obj.get("meta")
+    if not isinstance(meta_obj, dict):
+        meta_obj = {}
+
+    try:
+        fmt = ContentFormat(str(meta_obj.get("format") or "text"))
+    except Exception:
+        fmt = ContentFormat.TEXT
+
+    meta = ContextMetadata(
+        format=fmt,
+        size_bytes=int(meta_obj.get("size_bytes") or len(ctx.encode("utf-8", errors="ignore"))),
+        size_chars=int(meta_obj.get("size_chars") or len(ctx)),
+        size_lines=int(meta_obj.get("size_lines") or (ctx.count("\n") + 1)),
+        size_tokens_estimate=int(meta_obj.get("size_tokens_estimate") or (len(ctx) // 4)),
+        structure_hint=meta_obj.get("structure_hint"),
+        sample_preview=str(meta_obj.get("sample_preview") or ctx[:500]),
+    )
+
+    repl = REPLEnvironment(
+        context=ctx,
+        context_var_name="ctx",
+        config=sandbox_config,
+        loop=loop,
+    )
+    line_number_base = obj.get("line_number_base")
+    if line_number_base is None:
+        line_number_base = 0
+    try:
+        base = _validate_line_number_base(int(line_number_base))
+    except Exception:
+        base = DEFAULT_LINE_NUMBER_BASE
+    repl.set_variable("line_number_base", base)
+
+    created_at = datetime.now()
+    created_at_str = obj.get("created_at")
+    if isinstance(created_at_str, str):
+        try:
+            created_at = datetime.fromisoformat(created_at_str)
+        except Exception:
+            created_at = datetime.now()
+
+    tasks_payload = obj.get("tasks")
+    tasks: list[dict[str, Any]] = []
+    if isinstance(tasks_payload, list):
+        for task in tasks_payload:
+            if not isinstance(task, dict):
+                continue
+            if "id" not in task or "title" not in task:
+                continue
+            tasks.append({
+                "id": int(task.get("id")),
+                "title": str(task.get("title")),
+                "status": str(task.get("status") or "todo"),
+                "note": task.get("note"),
+                "created_at": task.get("created_at"),
+                "updated_at": task.get("updated_at"),
+            })
+
+    task_counter = int(obj.get("task_counter") or (max((t["id"] for t in tasks), default=0)))
+
+    session = _Session(
+        repl=repl,
+        meta=meta,
+        line_number_base=base,
+        created_at=created_at,
+        iterations=int(obj.get("iterations") or 0),
+        think_history=list(obj.get("think_history") or []),
+        confidence_history=list(obj.get("confidence_history") or []),
+        information_gain=list(obj.get("information_gain") or []),
+        chunks=obj.get("chunks"),
+        tasks=tasks,
+        task_counter=task_counter,
+    )
+
+    ev_list = obj.get("evidence")
+    if isinstance(ev_list, list):
+        for ev in ev_list:
+            if not isinstance(ev, dict):
+                continue
+            source = ev.get("source")
+            if source not in {"search", "peek", "exec", "manual", "action", "sub_query"}:
+                continue
+            line_range = ev.get("line_range")
+            if isinstance(line_range, list) and len(line_range) == 2:
+                try:
+                    line_range = (int(line_range[0]), int(line_range[1]))
+                except Exception:
+                    line_range = None
+            else:
+                line_range = None
+            timestamp = datetime.now()
+            ts_str = ev.get("timestamp")
+            if isinstance(ts_str, str):
+                try:
+                    timestamp = datetime.fromisoformat(ts_str)
+                except Exception:
+                    timestamp = datetime.now()
+            session.evidence.append(
+                _Evidence(
+                    source=source,
+                    line_range=line_range,
+                    pattern=ev.get("pattern"),
+                    snippet=str(ev.get("snippet") or ""),
+                    note=ev.get("note"),
+                    timestamp=timestamp,
+                )
+            )
+
+    return session
 
 def _detect_workspace_root() -> Path:
     cwd = Path.cwd()
@@ -242,7 +600,7 @@ class ActionConfig:
     workspace_root: Path = field(default_factory=_detect_workspace_root)
     workspace_mode: WorkspaceMode = DEFAULT_WORKSPACE_MODE
     require_confirmation: bool = False
-    max_cmd_seconds: float = 30.0
+    max_cmd_seconds: float = 60.0
     max_output_chars: int = 50_000
     max_read_bytes: int = 1_000_000_000   # Default 1GB. Increase if you have more RAM - the LLM only sees query results, not the file.
     max_write_bytes: int = 100_000_000    # 100 MB
@@ -284,6 +642,7 @@ class AlephMCPServerLocal:
         self.tool_docs_mode = tool_docs_mode
         self._sessions: dict[str, _Session] = {}
         self._remote_servers: dict[str, _RemoteServerHandle] = {}
+        self._auto_pack_loaded = False
 
         # Import MCP lazily so it's an optional dependency
         try:
@@ -295,6 +654,47 @@ class AlephMCPServerLocal:
 
         self.server = FastMCP("aleph-local")
         self._register_tools()
+
+        if self.action_config.enabled:
+            self._auto_load_memory_pack()
+
+    def _auto_load_memory_pack(self) -> None:
+        if self._auto_pack_loaded:
+            return
+        self._auto_pack_loaded = True
+        pack_path = self.action_config.workspace_root / ".aleph" / "memory_pack.json"
+        if not pack_path.exists() or not pack_path.is_file():
+            return
+        try:
+            if pack_path.stat().st_size > self.action_config.max_read_bytes:
+                return
+        except Exception:
+            return
+        try:
+            data = pack_path.read_bytes()
+            obj = json.loads(data.decode("utf-8", errors="replace"))
+        except Exception:
+            return
+
+        if not isinstance(obj, dict):
+            return
+        if obj.get("schema") != "aleph.memory_pack.v1":
+            return
+        sessions = obj.get("sessions")
+        if not isinstance(sessions, list):
+            return
+        for payload in sessions:
+            if not isinstance(payload, dict):
+                continue
+            session_id = payload.get("context_id") or payload.get("session_id")
+            resolved_id = str(session_id) if session_id else f"session_{len(self._sessions) + 1}"
+            if resolved_id in self._sessions:
+                continue
+            try:
+                session = _session_from_payload(payload, resolved_id, self.sandbox_config, loop=None)
+            except Exception:
+                continue
+            self._sessions[resolved_id] = session
 
     async def _ensure_remote_server(self, server_id: str) -> tuple[bool, str | _RemoteServerHandle]:
         """Ensure a remote MCP server is connected and initialized."""
@@ -433,13 +833,17 @@ class AlephMCPServerLocal:
             context_id: str,
             meta: ContextMetadata,
             line_number_base: LineNumberBase,
+            note: str | None = None,
         ) -> str:
             line_desc = "1-based" if line_number_base == 1 else "0-based"
-            return (
+            msg = (
                 f"Context loaded '{context_id}': {meta.size_chars:,} chars, "
                 f"{meta.size_lines:,} lines, ~{meta.size_tokens_estimate:,} tokens "
                 f"(line numbers {line_desc})."
             )
+            if note:
+                msg += f"\nNote: {note}"
+            return msg
 
         def _create_session(
             context: str,
@@ -567,6 +971,22 @@ class AlephMCPServerLocal:
             )
             session.information_gain.append(len(session.evidence) - evidence_before)
 
+        def _build_memory_pack_payload() -> tuple[dict[str, Any], list[str]]:
+            sessions_payload: list[dict[str, Any]] = []
+            skipped: list[str] = []
+            for sid, sess in self._sessions.items():
+                try:
+                    sessions_payload.append(_session_to_payload(sid, sess))
+                except Exception:
+                    skipped.append(sid)
+            payload = {
+                "schema": "aleph.memory_pack.v1",
+                "created_at": datetime.now().isoformat(),
+                "sessions": sessions_payload,
+                "skipped": skipped,
+            }
+            return payload, skipped
+
         async def _run_subprocess(
             argv: list[str],
             cwd: Path,
@@ -605,6 +1025,103 @@ class AlephMCPServerLocal:
                 "stderr": stderr,
             }
 
+        def _parse_rg_vimgrep(output: str, max_results: int) -> tuple[list[dict[str, Any]], bool]:
+            results: list[dict[str, Any]] = []
+            truncated = False
+            limit = max_results if max_results > 0 else None
+            for line in output.splitlines():
+                parts = line.split(":", 3)
+                if len(parts) < 4:
+                    continue
+                path_str, line_str, col_str, text = parts
+                try:
+                    line_no = int(line_str)
+                    col_no = int(col_str)
+                except ValueError:
+                    continue
+                results.append({
+                    "path": path_str,
+                    "line": line_no,
+                    "column": col_no,
+                    "text": text,
+                })
+                if limit is not None and len(results) >= limit:
+                    truncated = True
+                    break
+            return results, truncated
+
+        def _python_rg_search(
+            pattern: str,
+            roots: list[Path],
+            glob: str | None,
+            max_results: int,
+        ) -> tuple[list[dict[str, Any]], bool]:
+            results: list[dict[str, Any]] = []
+            truncated = False
+            limit = max_results if max_results > 0 else None
+            rx = re.compile(pattern)
+            skip_dirs = {".git", ".venv", "node_modules", "dist", "build", "__pycache__", ".mypy_cache", ".pytest_cache"}
+
+            def _iter_files(root: Path) -> Iterable[Path]:
+                if root.is_file():
+                    yield root
+                    return
+                for path in root.rglob("*"):
+                    if path.is_dir():
+                        continue
+                    if any(part in skip_dirs for part in path.parts):
+                        continue
+                    yield path
+
+            for root in roots:
+                for path in _iter_files(root):
+                    if glob and not fnmatch.fnmatch(path.name, glob):
+                        continue
+                    try:
+                        if path.stat().st_size > self.action_config.max_read_bytes:
+                            continue
+                        text = path.read_text(encoding="utf-8", errors="replace")
+                    except Exception:
+                        continue
+                    for idx, line in enumerate(text.splitlines(), start=1):
+                        match = rx.search(line)
+                        if not match:
+                            continue
+                        results.append({
+                            "path": str(path),
+                            "line": idx,
+                            "column": match.start() + 1,
+                            "text": line,
+                        })
+                        if limit is not None and len(results) >= limit:
+                            truncated = True
+                            return results, truncated
+            return results, truncated
+
+        def _auto_save_memory_pack() -> None:
+            if not self.action_config.enabled or not self._sessions:
+                return
+            payload, _ = _build_memory_pack_payload()
+            out_bytes = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8", errors="replace")
+            if len(out_bytes) > self.action_config.max_write_bytes:
+                return
+            try:
+                p = _scoped_path(
+                    self.action_config.workspace_root,
+                    ".aleph/memory_pack.json",
+                    self.action_config.workspace_mode,
+                )
+            except Exception:
+                return
+            p.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with open(p, "wb") as f:
+                    f.write(out_bytes)
+            except Exception:
+                return
+            for sess in self._sessions.values():
+                _record_action(sess, note="auto_save_memory_pack", snippet=str(p))
+
         @_tool()
         async def run_command(
             cmd: str,
@@ -642,6 +1159,125 @@ class AlephMCPServerLocal:
                 session.repl._namespace["last_command_result"] = payload
             _record_action(session, note="run_command", snippet=(payload.get("stdout") or payload.get("stderr") or "")[:200])
             return _format_payload(payload, output=output)
+
+        @_tool()
+        async def rg_search(
+            pattern: str,
+            paths: list[str] | None = None,
+            glob: str | None = None,
+            max_results: int = 200,
+            load_context_id: str | None = None,
+            confirm: bool = False,
+            output: Literal["json", "markdown", "object"] = "json",
+            context_id: str = "default",
+        ) -> str | dict[str, Any]:
+            """Fast codebase search using ripgrep (rg) with fallback scanning.
+
+            Args:
+                pattern: Regex pattern to search for
+                paths: Optional list of files/dirs (defaults to workspace root)
+                glob: Optional glob filter (e.g. "*.py")
+                max_results: Max matches to return (default: 200)
+                load_context_id: If set, load matches into this context
+                confirm: Required if actions are enabled
+                output: "json", "markdown", or "object"
+                context_id: Session to record evidence in
+            """
+            err = _require_actions(confirm)
+            if err:
+                return _format_error(err, output=output)
+            if not pattern:
+                return _format_error("pattern is required", output=output)
+
+            session = _get_or_create_session(context_id)
+            session.iterations += 1
+
+            workspace_root = self.action_config.workspace_root
+            resolved_paths: list[Path] = []
+            for p in paths or [str(workspace_root)]:
+                try:
+                    resolved_paths.append(
+                        _scoped_path(
+                            workspace_root,
+                            p,
+                            self.action_config.workspace_mode,
+                        )
+                    )
+                except Exception as e:
+                    return _format_error(str(e), output=output)
+
+            matches: list[dict[str, Any]] = []
+            truncated = False
+            used_rg = False
+            payload: dict[str, Any] | None = None
+
+            rg_bin = shutil.which("rg")
+            if rg_bin:
+                used_rg = True
+                argv = [rg_bin, "--vimgrep", pattern]
+                if glob:
+                    argv.extend(["-g", glob])
+                if max_results > 0:
+                    argv.extend(["-m", str(max_results)])
+                argv.extend(str(p) for p in resolved_paths)
+                payload = await _run_subprocess(argv=argv, cwd=workspace_root, timeout_seconds=self.action_config.max_cmd_seconds)
+                matches, truncated = _parse_rg_vimgrep(payload.get("stdout") or "", max_results)
+            else:
+                matches, truncated = _python_rg_search(pattern, resolved_paths, glob, max_results)
+
+            hits_text = "\n".join(
+                f"{m['path']}:{m['line']}:{m['column']}:{m['text']}" for m in matches
+            )
+            if load_context_id:
+                meta = _create_session(hits_text, load_context_id, ContentFormat.TEXT, DEFAULT_LINE_NUMBER_BASE)
+                session.repl._namespace["last_rg_loaded_context"] = load_context_id
+                load_note = f"Loaded {len(matches)} match(es) into '{load_context_id}'."
+            else:
+                meta = None
+                load_note = None
+
+            result_payload = {
+                "pattern": pattern,
+                "paths": [str(p) for p in resolved_paths],
+                "used_rg": used_rg,
+                "match_count": len(matches),
+                "truncated": truncated,
+                "matches": matches,
+            }
+            if payload:
+                result_payload["command"] = payload.get("argv")
+                result_payload["timed_out"] = payload.get("timed_out", False)
+                result_payload["stderr"] = payload.get("stderr", "")
+            if load_context_id:
+                result_payload["loaded_context_id"] = load_context_id
+                result_payload["loaded_meta"] = {
+                    "size_chars": meta.size_chars if meta else 0,
+                    "size_lines": meta.size_lines if meta else 0,
+                }
+                if load_note:
+                    result_payload["note"] = load_note
+
+            session.repl._namespace["last_rg_result"] = result_payload
+            _record_action(session, note="rg_search", snippet=f"{pattern} ({len(matches)} matches)")
+
+            if output == "object":
+                return result_payload
+            if output == "json":
+                return json.dumps(result_payload, ensure_ascii=False, indent=2)
+
+            parts = [
+                "## rg_search Results",
+                f"Pattern: `{pattern}`",
+                f"Matches: {len(matches)}" + (" (truncated)" if truncated else ""),
+            ]
+            if load_note:
+                parts.append(load_note)
+            if matches:
+                parts.append("")
+                parts.extend([f"- {m['path']}:{m['line']}:{m['column']}: {m['text']}" for m in matches[:20]])
+                if len(matches) > 20:
+                    parts.append(f"... {len(matches) - 20} more")
+            return "\n".join(parts)
 
         @_tool()
         async def read_file(
@@ -763,16 +1399,22 @@ class AlephMCPServerLocal:
             if not p.exists() or not p.is_file():
                 return f"Error: File not found: {path}"
 
-            data = p.read_bytes()
-            if len(data) > self.action_config.max_read_bytes:
-                return f"Error: File too large to read (>{self.action_config.max_read_bytes} bytes): {path}"
-
-            text = data.decode("utf-8", errors="replace")
-            fmt = _detect_format(text) if format == "auto" else ContentFormat(format)
+            try:
+                text, detected_fmt, warning = _load_text_from_path(
+                    p,
+                    max_bytes=self.action_config.max_read_bytes,
+                    timeout_seconds=self.action_config.max_cmd_seconds,
+                )
+            except ValueError as e:
+                return f"Error: {e}"
+            try:
+                fmt = detected_fmt if format == "auto" else ContentFormat(format)
+            except Exception as e:
+                return f"Error: {e}"
             meta = _create_session(text, context_id, fmt, base)
             session = self._sessions[context_id]
             _record_action(session, note="load_file", snippet=str(p))
-            return _format_context_loaded(context_id, meta, base)
+            return _format_context_loaded(context_id, meta, base, note=warning)
 
         @_tool()
         async def write_file(
@@ -1025,55 +1667,52 @@ class AlephMCPServerLocal:
             confirm: bool = False,
             output: Literal["json", "markdown", "object"] = "json",
         ) -> str | dict[str, Any]:
+            """Save a session to disk.
+
+            Use context_id="*" or session_id="*" to save all sessions as a memory pack.
+            """
             err = _require_actions(confirm)
             if err:
                 return _format_error(err, output=output)
 
             target_id = context_id or session_id
+            if target_id in {"*", "all"}:
+                payload, skipped = _build_memory_pack_payload()
+                pack_path = path if path != "aleph_session.json" else ".aleph/memory_pack.json"
+                out_bytes = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8", errors="replace")
+                if len(out_bytes) > self.action_config.max_write_bytes:
+                    return _format_error(
+                        f"Session file too large to write (>{self.action_config.max_write_bytes} bytes)",
+                        output=output,
+                    )
+                try:
+                    p = _scoped_path(
+                        self.action_config.workspace_root,
+                        pack_path,
+                        self.action_config.workspace_mode,
+                    )
+                except Exception as e:
+                    return _format_error(str(e), output=output)
+
+                p.parent.mkdir(parents=True, exist_ok=True)
+                with open(p, "wb") as f:
+                    f.write(out_bytes)
+
+                for sess in self._sessions.values():
+                    _record_action(sess, note="save_memory_pack", snippet=str(p))
+
+                payload_out = {"path": str(p), "bytes_written": len(out_bytes), "sessions": len(payload["sessions"])}
+                if skipped:
+                    payload_out["skipped"] = skipped
+                return _format_payload(payload_out, output=output)
+
             if target_id not in self._sessions:
                 return _format_error(f"No context loaded with ID '{target_id}'. Use load_context first.", output=output)
 
             session = self._sessions[target_id]
             session.iterations += 1
 
-            ctx_val = session.repl.get_variable("ctx")
-            if not isinstance(ctx_val, str):
-                return _format_error("save_session currently supports only text contexts", output=output)
-
-            payload: dict[str, Any] = {
-                "schema": "aleph.session.v1",
-                "session_id": target_id,
-                "context_id": target_id,
-                "created_at": session.created_at.isoformat(),
-                "iterations": session.iterations,
-                "line_number_base": session.line_number_base,
-                "meta": {
-                    "format": session.meta.format.value,
-                    "size_bytes": session.meta.size_bytes,
-                    "size_chars": session.meta.size_chars,
-                    "size_lines": session.meta.size_lines,
-                    "size_tokens_estimate": session.meta.size_tokens_estimate,
-                    "structure_hint": session.meta.structure_hint,
-                    "sample_preview": session.meta.sample_preview,
-                },
-                "ctx": ctx_val,
-                "think_history": list(session.think_history),
-                "confidence_history": list(session.confidence_history),
-                "information_gain": list(session.information_gain),
-                "chunks": session.chunks,
-                "evidence": [
-                    {
-                        "source": ev.source,
-                        "line_range": list(ev.line_range) if ev.line_range else None,
-                        "pattern": ev.pattern,
-                        "snippet": ev.snippet,
-                        "note": ev.note,
-                        "timestamp": ev.timestamp.isoformat(),
-                    }
-                    for ev in session.evidence
-                ],
-            }
-
+            payload = _session_to_payload(target_id, session)
             out_bytes = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8", errors="replace")
             if len(out_bytes) > self.action_config.max_write_bytes:
                 return _format_error(
@@ -1105,6 +1744,7 @@ class AlephMCPServerLocal:
             confirm: bool = False,
             output: Literal["json", "markdown", "object"] = "json",
         ) -> str | dict[str, Any]:
+            """Load a session from disk (supports memory packs)."""
             err = _require_actions(confirm)
             if err:
                 return _format_error(err, output=output)
@@ -1136,96 +1776,57 @@ class AlephMCPServerLocal:
             if not isinstance(obj, dict):
                 return _format_error("Invalid session file format", output=output)
 
-            ctx = obj.get("ctx")
-            if not isinstance(ctx, str):
-                return _format_error("Invalid session file: ctx must be a string", output=output)
+            schema = obj.get("schema")
+            if schema == "aleph.memory_pack.v1":
+                sessions = obj.get("sessions")
+                if not isinstance(sessions, list):
+                    return _format_error("Invalid memory pack format", output=output)
+                loaded: list[str] = []
+                skipped_existing: list[str] = []
+                skipped_invalid = 0
+                for payload in sessions:
+                    if not isinstance(payload, dict):
+                        skipped_invalid += 1
+                        continue
+                    file_session_id = payload.get("context_id") or payload.get("session_id")
+                    resolved_id = str(file_session_id) if file_session_id else f"session_{len(self._sessions) + 1}"
+                    if resolved_id in self._sessions:
+                        skipped_existing.append(resolved_id)
+                        continue
+                    try:
+                        session = _session_from_payload(
+                            payload,
+                            resolved_id,
+                            self.sandbox_config,
+                            loop=asyncio.get_running_loop(),
+                        )
+                    except Exception:
+                        skipped_invalid += 1
+                        continue
+                    self._sessions[resolved_id] = session
+                    _record_action(session, note="load_memory_pack", snippet=str(p))
+                    loaded.append(resolved_id)
+                return _format_payload(
+                    {
+                        "loaded": loaded,
+                        "skipped_existing": skipped_existing,
+                        "skipped_invalid": skipped_invalid,
+                        "loaded_from": str(p),
+                    },
+                    output=output,
+                )
 
             file_session_id = obj.get("context_id") or obj.get("session_id")
             resolved_id = context_id or session_id or (str(file_session_id) if file_session_id else "default")
-
-            meta_obj = obj.get("meta")
-            if not isinstance(meta_obj, dict):
-                meta_obj = {}
-
             try:
-                fmt = ContentFormat(str(meta_obj.get("format") or "text"))
-            except Exception:
-                fmt = ContentFormat.TEXT
-
-            meta = ContextMetadata(
-                format=fmt,
-                size_bytes=int(meta_obj.get("size_bytes") or len(ctx.encode("utf-8", errors="ignore"))),
-                size_chars=int(meta_obj.get("size_chars") or len(ctx)),
-                size_lines=int(meta_obj.get("size_lines") or (ctx.count("\n") + 1)),
-                size_tokens_estimate=int(meta_obj.get("size_tokens_estimate") or (len(ctx) // 4)),
-                structure_hint=meta_obj.get("structure_hint"),
-                sample_preview=str(meta_obj.get("sample_preview") or ctx[:500]),
-            )
-
-            repl = REPLEnvironment(
-                context=ctx,
-                context_var_name="ctx",
-                config=self.sandbox_config,
-                loop=asyncio.get_running_loop(),
-            )
-            line_number_base = obj.get("line_number_base")
-            if line_number_base is None:
-                line_number_base = 0
-            try:
-                base = _validate_line_number_base(int(line_number_base))
-            except Exception:
-                base = DEFAULT_LINE_NUMBER_BASE
-            repl.set_variable("line_number_base", base)
-
-            created_at = datetime.now()
-            created_at_str = obj.get("created_at")
-            if isinstance(created_at_str, str):
-                try:
-                    created_at = datetime.fromisoformat(created_at_str)
-                except Exception:
-                    created_at = datetime.now()
-
-            session = _Session(
-                repl=repl,
-                meta=meta,
-                line_number_base=base,
-                created_at=created_at,
-                iterations=int(obj.get("iterations") or 0),
-                think_history=list(obj.get("think_history") or []),
-                confidence_history=list(obj.get("confidence_history") or []),
-                information_gain=list(obj.get("information_gain") or []),
-                chunks=obj.get("chunks"),
-            )
-
-            ev_list = obj.get("evidence")
-            if isinstance(ev_list, list):
-                for ev in ev_list:
-                    if not isinstance(ev, dict):
-                        continue
-                    ts = datetime.now()
-                    ts_s = ev.get("timestamp")
-                    if isinstance(ts_s, str):
-                        try:
-                            ts = datetime.fromisoformat(ts_s)
-                        except Exception:
-                            ts = datetime.now()
-                    source = ev.get("source")
-                    if source not in {"search", "peek", "exec", "manual", "action"}:
-                        source = "manual"
-                    lr = ev.get("line_range")
-                    line_range: tuple[int, int] | None = None
-                    if isinstance(lr, list) and len(lr) == 2 and all(isinstance(x, int) for x in lr):
-                        line_range = (int(lr[0]), int(lr[1]))
-                    session.evidence.append(
-                        _Evidence(
-                            source=source,
-                            line_range=line_range,
-                            pattern=ev.get("pattern"),
-                            snippet=str(ev.get("snippet") or ""),
-                            note=ev.get("note"),
-                            timestamp=ts,
-                        )
-                    )
+                session = _session_from_payload(
+                    obj,
+                    resolved_id,
+                    self.sandbox_config,
+                    loop=asyncio.get_running_loop(),
+                )
+            except ValueError as e:
+                return _format_error(str(e), output=output)
 
             self._sessions[resolved_id] = session
             _record_action(session, note="load_session", snippet=str(p))
@@ -1233,7 +1834,7 @@ class AlephMCPServerLocal:
                 {
                     "context_id": resolved_id,
                     "session_id": resolved_id,
-                    "line_number_base": base,
+                    "line_number_base": session.line_number_base,
                     "loaded_from": str(p),
                 },
                 output=output,
@@ -1245,7 +1846,7 @@ class AlephMCPServerLocal:
             end: int | None = None,
             context_id: str = "default",
             unit: Literal["chars", "lines"] = "chars",
-            record_evidence: bool = False,
+            record_evidence: bool = True,
         ) -> str:
             """View a portion of the loaded context.
 
@@ -1420,6 +2021,93 @@ class AlephMCPServerLocal:
             )
 
         @_tool()
+        async def semantic_search(
+            query: str,
+            context_id: str = "default",
+            chunk_size: int = 1000,
+            overlap: int = 100,
+            top_k: int = 5,
+            embed_dim: int = 256,
+            record_evidence: bool = True,
+            output: Literal["markdown", "json", "object"] = "markdown",
+        ) -> str | dict[str, Any]:
+            """Semantic search over the context using lightweight embeddings.
+
+            Args:
+                query: Semantic query
+                context_id: Context identifier
+                chunk_size: Characters per chunk (default: 1000)
+                overlap: Overlap between chunks (default: 100)
+                top_k: Number of results to return (default: 5)
+                embed_dim: Embedding dimensions (default: 256)
+                record_evidence: Store evidence entry for this search
+                output: "markdown", "json", or "object"
+            """
+            if context_id not in self._sessions:
+                return f"Error: No context loaded with ID '{context_id}'. Use load_context first."
+
+            session = self._sessions[context_id]
+            repl = session.repl
+            session.iterations += 1
+
+            fn = repl.get_variable("semantic_search")
+            if not callable(fn):
+                return "Error: semantic_search() helper is not available"
+
+            try:
+                results = fn(
+                    query,
+                    chunk_size=chunk_size,
+                    overlap=overlap,
+                    top_k=top_k,
+                    embed_dim=embed_dim,
+                )
+            except Exception as e:
+                return f"Error: {e}"
+
+            evidence_before = len(session.evidence)
+            if record_evidence and results:
+                session.evidence.append(
+                    _Evidence(
+                        source="search",
+                        line_range=None,
+                        pattern=query,
+                        note="semantic_search",
+                        snippet=str(results[0].get("preview") or "")[:200],
+                    )
+                )
+            session.information_gain.append(len(session.evidence) - evidence_before)
+
+            payload = {
+                "context_id": context_id,
+                "query": query,
+                "count": len(results),
+                "results": results,
+            }
+
+            session.repl._namespace["last_semantic_search"] = payload
+
+            if output == "object":
+                return payload
+            if output == "json":
+                return json.dumps(payload, ensure_ascii=False, indent=2)
+
+            parts = [
+                "## Semantic Search Results",
+                f"Query: `{query}`",
+                f"Matches: {len(results)}",
+            ]
+            if results:
+                parts.append("")
+                for r in results:
+                    parts.append(
+                        f"- Chunk {r['index']} ({r['start_char']}-{r['end_char']}), score {r['score']:.3f}: {r['preview']}"
+                    )
+                parts.append("")
+                parts.append("*Use `peek_context(start, end, unit='chars')` for full chunks.*")
+            return "\n".join(parts)
+
+        @_tool()
         async def exec_python(
             code: str,
             context_id: str = "default",
@@ -1433,6 +2121,8 @@ class AlephMCPServerLocal:
             - lines(start, end): View lines
             - search(pattern, context_lines=2, max_results=20): Regex search
             - chunk(chunk_size, overlap=0): Split context into chunks
+            - semantic_search(query, chunk_size=1000, overlap=100, top_k=5): Meaning-based search
+            - embed_text(text, dim=256): Lightweight embedding vector
             - cite(snippet, line_range=None, note=None): Tag evidence for provenance
             - allowed_imports(): List allowed imports in the sandbox
             - is_import_allowed(name): Check if an import is allowed
@@ -1587,6 +2277,87 @@ class AlephMCPServerLocal:
             return "\n".join(parts)
 
         @_tool()
+        async def tasks(
+            action: Literal["add", "list", "update", "done", "remove"] = "list",
+            title: str | None = None,
+            task_id: int | None = None,
+            status: Literal["todo", "doing", "done"] | None = None,
+            note: str | None = None,
+            context_id: str = "default",
+            output: Literal["markdown", "json", "object"] = "markdown",
+        ) -> str | dict[str, Any]:
+            """Track tasks tied to a context session."""
+            session = _get_or_create_session(context_id)
+            session.iterations += 1
+
+            valid_statuses = {"todo", "doing", "done"}
+            now = datetime.now().isoformat()
+
+            if action == "add":
+                if not title:
+                    return _format_error("title is required for add", output=output)
+                session.task_counter += 1
+                task = {
+                    "id": session.task_counter,
+                    "title": title,
+                    "status": status if status in valid_statuses else "todo",
+                    "note": note,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                session.tasks.append(task)
+            elif action in {"update", "done"}:
+                if task_id is None:
+                    return _format_error("task_id is required for update/done", output=output)
+                task = next((t for t in session.tasks if t.get("id") == task_id), None)
+                if task is None:
+                    return _format_error(f"Task {task_id} not found", output=output)
+                if title is not None:
+                    task["title"] = title
+                if action == "done":
+                    task["status"] = "done"
+                elif status in valid_statuses:
+                    task["status"] = status
+                if note is not None:
+                    task["note"] = note
+                task["updated_at"] = now
+            elif action == "remove":
+                if task_id is None:
+                    return _format_error("task_id is required for remove", output=output)
+                before = len(session.tasks)
+                session.tasks = [t for t in session.tasks if t.get("id") != task_id]
+                if len(session.tasks) == before:
+                    return _format_error(f"Task {task_id} not found", output=output)
+
+            counts = {
+                "todo": sum(1 for t in session.tasks if t.get("status") == "todo"),
+                "doing": sum(1 for t in session.tasks if t.get("status") == "doing"),
+                "done": sum(1 for t in session.tasks if t.get("status") == "done"),
+            }
+            payload = {
+                "context_id": context_id,
+                "total": len(session.tasks),
+                "counts": counts,
+                "items": sorted(session.tasks, key=lambda t: int(t.get("id", 0))),
+            }
+
+            if output == "object":
+                return payload
+            if output == "json":
+                return json.dumps(payload, ensure_ascii=False, indent=2)
+
+            parts = [
+                "## Tasks",
+                f"Total: {payload['total']} (todo: {counts['todo']}, doing: {counts['doing']}, done: {counts['done']})",
+            ]
+            if payload["items"]:
+                parts.append("")
+                for task in payload["items"]:
+                    note_text = f" — {task['note']}" if task.get("note") else ""
+                    parts.append(f"- [{task.get('status', 'todo')}] #{task.get('id')}: {task.get('title')}{note_text}")
+            return "\n".join(parts)
+
+        @_tool()
         async def get_status(
             context_id: str = "default",
         ) -> str:
@@ -1657,6 +2428,21 @@ class AlephMCPServerLocal:
                 ])
                 for i, q in enumerate(session.think_history[-5:], 1):
                     parts.append(f"{i}. {q[:100]}{'...' if len(q) > 100 else ''}")
+
+            if session.tasks:
+                counts = {
+                    "todo": sum(1 for t in session.tasks if t.get("status") == "todo"),
+                    "doing": sum(1 for t in session.tasks if t.get("status") == "doing"),
+                    "done": sum(1 for t in session.tasks if t.get("status") == "done"),
+                }
+                parts.extend([
+                    "",
+                    "### Tasks",
+                    f"- Total: {len(session.tasks)} (todo: {counts['todo']}, doing: {counts['doing']}, done: {counts['done']})",
+                ])
+                open_tasks = [t for t in session.tasks if t.get("status") in {"todo", "doing"}][:5]
+                for t in open_tasks:
+                    parts.append(f"- #{t.get('id')}: {t.get('title')} ({t.get('status')})")
 
             # Convergence metrics
             parts.extend([
@@ -1842,6 +2628,7 @@ class AlephMCPServerLocal:
                             source_info += f" note: {ev.note}"
                         parts.append(f"{i}. {source_info}: \"{ev.snippet[:80]}...\"" if len(ev.snippet) > 80 else f"{i}. {source_info}: \"{ev.snippet}\"")
 
+            _auto_save_memory_pack()
             return "\n".join(parts)
 
         # =====================================================================
@@ -2342,6 +3129,20 @@ class AlephMCPServerLocal:
                     parts.append(f"{i}. {q[:150]}{'...' if len(q) > 150 else ''}")
                 parts.append("")
 
+            if session.tasks:
+                counts = {
+                    "todo": sum(1 for t in session.tasks if t.get("status") == "todo"),
+                    "doing": sum(1 for t in session.tasks if t.get("status") == "doing"),
+                    "done": sum(1 for t in session.tasks if t.get("status") == "done"),
+                }
+                parts.extend([
+                    "### Tasks",
+                    f"Total: {len(session.tasks)} (todo: {counts['todo']}, doing: {counts['doing']}, done: {counts['done']})",
+                ])
+                for t in session.tasks[:5]:
+                    parts.append(f"- #{t.get('id')}: {t.get('title')} ({t.get('status')})")
+                parts.append("")
+
             # Evidence summary
             if include_evidence and session.evidence:
                 parts.extend([
@@ -2447,14 +3248,14 @@ def main() -> None:
     parser.add_argument(
         "--timeout",
         type=float,
-        default=30.0,
-        help="Code execution timeout in seconds (default: 30)",
+        default=60.0,
+        help="Code execution timeout in seconds (default: 60)",
     )
     parser.add_argument(
         "--max-output",
         type=int,
-        default=10000,
-        help="Maximum output characters (default: 10000)",
+        default=50000,
+        help="Maximum output characters (default: 50000)",
     )
     parser.add_argument(
         "--enable-actions",

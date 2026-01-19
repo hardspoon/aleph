@@ -31,7 +31,10 @@ Note: tool names may appear as `mcp__aleph__load_context` in your MCP client.
 - Use `output="json"` for structured results and `output="markdown"` for human-readable output.
 - Action tools require starting the server with `--enable-actions` and may require `confirm=true`.
 - For large docs, pair `chunk_context()` with `peek_context()` to navigate quickly.
+- Use `rg_search()` for fast repo search and `semantic_search()` for meaning-based lookup.
+- `load_file()` handles PDFs, Word docs, HTML, and compressed logs (.gz/.bz2/.xz).
 - Save and resume long tasks with `save_session()` and `load_session()`.
+- Memory packs auto-save to `.aleph/memory_pack.json` and auto-load on startup (actions enabled).
 - To see full tool docstrings, start with `--tool-docs full` or set `ALEPH_TOOL_DOCS=full`.
 
 ## Core Patterns
@@ -70,6 +73,18 @@ evaluate_progress(
 finalize(answer="Conclusion: ...", confidence="high", context_id="analysis")
 ```
 
+### 4) Fast Repo Search (rg)
+```
+rg_search(pattern="TODO|FIXME", paths=["."], load_context_id="rg_hits", confirm=true)
+search_context(pattern="TODO", context_id="rg_hits")
+```
+
+### 5) Semantic Search
+```
+semantic_search(query="login failure", context_id="doc", top_k=3)
+peek_context(start=1200, end=1600, unit="chars", context_id="doc")
+```
+
 ## Sub-Query Guidance
 
 Use sub-queries for bounded, single-shot tasks. Provide a specific output format.
@@ -85,41 +100,60 @@ If you need to parse results in `exec_python`, prefer line-based formats like `K
 
 ## Tool Reference
 
-### Loading and Querying
+### Core Tools (always available)
+
+**Context Management:**
 | Tool | Purpose |
 |------|---------|
 | `load_context` | Load text/data into external memory |
-| `load_file` | Load file from disk (requires --enable-actions) |
 | `list_contexts` | See all loaded contexts |
-| `search_context` | Regex search with surrounding context |
-| `peek_context` | View specific line/char ranges |
-| `chunk_context` | Split into navigable chunks |
 | `diff_contexts` | Compare two contexts |
 
-### Reasoning
+**Search & Navigation:**
+| Tool | Purpose |
+|------|---------|
+| `search_context` | Regex search with surrounding context |
+| `semantic_search` | Meaning-based search over the context |
+| `peek_context` | View specific line/char ranges |
+| `chunk_context` | Split into navigable chunks |
+
+**Reasoning & Execution:**
 | Tool | Purpose |
 |------|---------|
 | `think` | Structure a reasoning sub-step |
-| `evaluate_progress` | Self-assess and iterate |
+| `evaluate_progress` | Self-assess and decide whether to continue |
 | `summarize_so_far` | Compress reasoning history |
-| `exec_python` | Run code over content |
+| `exec_python` | Run code over content (100+ built-in helpers) |
 | `get_variable` | Retrieve a variable from the sandbox |
 | `get_status` | Session state |
 | `get_evidence` | View citations |
 | `finalize` | Complete with answer |
-
-### Recursion
-| Tool | Purpose |
-|------|---------|
+| `tasks` | Track tasks attached to a context |
 | `sub_query` | Spawn a sub-agent for a chunk |
 
-### Persistence
+### Action Tools (requires `--enable-actions`)
+
+**Filesystem:**
 | Tool | Purpose |
 |------|---------|
-| `save_session` | Save state to file |
+| `load_file` | Load file from disk (PDFs, Word, HTML, .gz, etc.) |
+| `read_file` | Read file content (raw) |
+| `write_file` | Write file content |
+
+**Shell & Search:**
+| Tool | Purpose |
+|------|---------|
+| `run_command` | Run a shell command |
+| `run_tests` | Run test commands |
+| `rg_search` | Fast repo-wide search (ripgrep) |
+
+**Persistence:**
+| Tool | Purpose |
+|------|---------|
+| `save_session` | Save state to file (memory packs) |
 | `load_session` | Resume from file |
 
-### Remote Control
+**Remote MCP Orchestration:**
 | Tool | Purpose |
 |------|---------|
 | `add_remote_server` | Register MCP server |
@@ -128,18 +162,13 @@ If you need to parse results in `exec_python`, prefer line-based formats like `K
 | `call_remote_tool` | Execute remote tool |
 | `close_remote_server` | Disconnect |
 
-### Action Tools (requires --enable-actions)
-| Tool | Purpose |
-|------|---------|
-| `read_file` | Read file content |
-| `write_file` | Write file content |
-| `run_command` | Run a shell command |
-| `run_tests` | Run test commands |
-
 ## exec_python Helpers
 
 **Core:**
 - `ctx`, `peek(start, end)`, `lines(start, end)`, `search(pattern)`, `chunk(size)`
+- `semantic_search(query, ...)` for meaning-based search
+- `embed_text(text, dim)` for lightweight embeddings
+- `extract_routes(lang="auto")` for route extraction
 - `cite(snippet, line_range, note)` for evidence
 - `sub_query(prompt, context_slice)` for recursion
 
@@ -156,5 +185,6 @@ Extractors return `list[dict]` with keys: `value`, `line_num`, `start`, `end`.
 - "Tool not found": MCP server not running; check `aleph` command.
 - "Context not found": verify `context_id` and use `list_contexts()`.
 - Search returns nothing: broaden your regex pattern.
+- `rg_search` slow: install ripgrep (`rg`) for best performance.
 - Running out of context: use `summarize_so_far()` to compress.
 - Session file not found: check the path relative to the server working dir.

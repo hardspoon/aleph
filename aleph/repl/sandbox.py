@@ -103,8 +103,8 @@ class SandboxConfig:
     """Configuration for the sandbox environment."""
 
     allowed_imports: list[str] = field(default_factory=lambda: list(DEFAULT_ALLOWED_IMPORTS))
-    max_output_chars: int = 10_000
-    timeout_seconds: float = 30.0
+    max_output_chars: int = 50_000
+    timeout_seconds: float = 60.0
     enable_code_execution: bool = True
 
 
@@ -497,6 +497,7 @@ class REPLEnvironment:
                 "extract_classes": lambda lang="python": _helpers.extract_classes(ctx_getter(), lang),
                 "extract_imports": lambda lang="python": _helpers.extract_imports(ctx_getter(), lang),
                 "extract_comments": lambda lang="python": _helpers.extract_comments(ctx_getter(), lang),
+                "extract_routes": lambda lang="auto": _helpers.extract_routes(ctx_getter(), lang),
                 "extract_strings": lambda: _helpers.extract_strings(ctx_getter()),
                 "extract_todos": lambda: _helpers.extract_todos(ctx_getter()),
 
@@ -558,6 +559,17 @@ class REPLEnvironment:
                 "similarity": _helpers.similarity,
                 "common_lines": _helpers.common_lines,
                 "diff_lines": _helpers.diff_lines,
+
+                # === Semantic search (context-aware) ===
+                "semantic_search": lambda query, chunk_size=1000, overlap=100, top_k=5, embed_dim=256: _helpers.semantic_search(
+                    ctx_getter(),
+                    query,
+                    chunk_size=chunk_size,
+                    overlap=overlap,
+                    top_k=top_k,
+                    embed_dim=embed_dim,
+                ),
+                "embed_text": _helpers.embed_text,
                 "dedupe": _helpers.dedupe,
                 "flatten": _helpers.flatten,
                 "first": _helpers.first,

@@ -34,8 +34,7 @@ class AlephConfig:
 
     # Budget defaults
     max_tokens: int | None = None
-    max_cost_usd: float | None = 5.0
-    max_iterations: int = 50
+    max_iterations: int = 100
     max_depth: int = 2
     max_wall_time_seconds: float = 300.0
     max_sub_queries: int = 100
@@ -43,8 +42,8 @@ class AlephConfig:
     # Sandbox
     enable_code_execution: bool = True
     allowed_imports: list[str] = field(default_factory=lambda: list(DEFAULT_ALLOWED_IMPORTS))
-    sandbox_timeout_seconds: float = 30.0
-    max_output_chars: int = 10_000
+    sandbox_timeout_seconds: float = 60.0
+    max_output_chars: int = 50_000
 
     # REPL
     context_var_name: str = "ctx"
@@ -92,20 +91,13 @@ class AlephConfig:
                 return default
             return int(v)
 
-        def getenv_float(name: str, default: float | None) -> float | None:
-            v = os.getenv(name)
-            if v is None or v == "":
-                return default
-            return float(v)
-
         return cls(
             provider=os.getenv("ALEPH_PROVIDER", os.getenv("RLM_PROVIDER", "anthropic")),
             root_model=os.getenv("ALEPH_MODEL", os.getenv("RLM_MODEL", "claude-sonnet-4-20250514")),
             sub_model=os.getenv("ALEPH_SUB_MODEL", os.getenv("RLM_SUB_MODEL")),
             api_key=os.getenv("ALEPH_API_KEY", os.getenv("RLM_API_KEY")),
             max_tokens=getenv_int("ALEPH_MAX_TOKENS", None),
-            max_cost_usd=getenv_float("ALEPH_MAX_COST", 5.0),
-            max_iterations=int(os.getenv("ALEPH_MAX_ITERATIONS", "50")),
+            max_iterations=int(os.getenv("ALEPH_MAX_ITERATIONS", "100")),
             max_depth=int(os.getenv("ALEPH_MAX_DEPTH", "2")),
             max_wall_time_seconds=float(os.getenv("ALEPH_MAX_WALL_TIME", "300")),
             max_sub_queries=int(os.getenv("ALEPH_MAX_SUB_QUERIES", "100")),
@@ -117,7 +109,6 @@ class AlephConfig:
         """Convert this config to a :class:`~aleph.types.Budget` instance."""
         return Budget(
             max_tokens=self.max_tokens,
-            max_cost_usd=self.max_cost_usd,
             max_iterations=self.max_iterations,
             max_depth=self.max_depth,
             max_wall_time_seconds=self.max_wall_time_seconds,

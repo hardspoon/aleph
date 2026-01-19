@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from aleph.repl.helpers import peek, lines, search, chunk
+from aleph.repl.helpers import peek, lines, search, chunk, extract_routes, semantic_search
 
 
 class TestPeek:
@@ -197,3 +197,29 @@ class TestChunk:
         assert len(chunks) > 0
         # Should be JSON-ified
         assert any("{" in c for c in chunks)
+
+
+class TestExtractRoutes:
+    """Tests for extract_routes()."""
+
+    def test_extract_routes_fastapi(self) -> None:
+        text = '@app.get("/api/health")\n@app.post("/api/items")'
+        results = extract_routes(text)
+        assert any("/api/health" in r["value"] for r in results)
+        assert any("/api/items" in r["value"] for r in results)
+
+    def test_extract_routes_express(self) -> None:
+        text = "router.get('/v1/users', handler)\napp.use('/v1', router)"
+        results = extract_routes(text)
+        assert any("/v1/users" in r["value"] for r in results)
+        assert any("/v1" in r["value"] for r in results)
+
+
+class TestSemanticSearch:
+    """Tests for semantic_search()."""
+
+    def test_semantic_search_prefers_relevant_chunk(self) -> None:
+        text = "alpha beta gamma\ncats and dogs\n\nrocket launch sequence\norbit payload"
+        results = semantic_search(text, "rocket", chunk_size=30, overlap=0, top_k=1)
+        assert results
+        assert "rocket" in results[0]["preview"].lower()
