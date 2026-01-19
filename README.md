@@ -4,11 +4,18 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PyPI version](https://img.shields.io/pypi/v/aleph-rlm.svg)](https://pypi.org/project/aleph-rlm/)
 
-Aleph implements the [Recursive Language Model](https://arxiv.org/abs/2512.24601) (RLM) architecture—an MCP server that gives Claude (or any LLM) access to unlimited local context.
+Aleph is an MCP server that gives any LLM access to gigabytes of local data without consuming context. It implements the [Recursive Language Model](https://arxiv.org/abs/2512.24601) (RLM) architecture.
 
-**Your RAM is the new context window.** Load gigabytes of logs, codebases, or data dumps into a Python process. The model queries it via search, slicing, and sandboxed code execution. Only the results enter context—never the raw file.
+**Your RAM is the new context window.** Load massive files into a Python process. The model explores them via search, slicing, and sandboxed code execution—only results enter the context window, never the raw content.
 
-Use `/aleph` in Claude Code to start, or configure any MCP client.
+Works with Claude Code (`/aleph`), Cursor, VS Code, Windsurf, Codex, Claude Desktop, or any MCP client.
+
+## Use Cases
+
+- **Analyze logs too large for context** — Load 500MB of production logs, search for error patterns, correlate across time ranges
+- **Navigate unfamiliar codebases** — Load entire repos, find definitions, trace call chains, extract architecture
+- **Process data dumps** — JSON exports, CSV files, API responses—explore interactively with Python
+- **Long-running research** — Save/resume sessions, track evidence and citations, spawn sub-queries for deep analysis
 
 ## Quickstart
 
@@ -20,26 +27,24 @@ pip install "aleph-rlm[mcp]"
 
 ### 2) Configure your MCP client
 
-Automatic (recommended):
-
+**Claude Code** (automatic):
 ```bash
 aleph-rlm install
 ```
 
-Manual (works in any MCP client that supports `mcpServers`):
-
+**Any MCP client** (Cursor, VS Code, Claude Desktop, Codex, Windsurf):
 ```json
 {
   "mcpServers": {
     "aleph": {
       "command": "aleph",
-      "args": ["--enable-actions", "--tool-docs", "concise", "--workspace-root", "/absolute/path/to/your/project"]
+      "args": ["--enable-actions", "--workspace-mode", "any"]
     }
   }
 }
 ```
 
-Client-specific setup (Cursor/VS Code/Claude Desktop/Codex/Windsurf): see [MCP_SETUP.md](MCP_SETUP.md).
+See [MCP_SETUP.md](MCP_SETUP.md) for client-specific config paths and workspace options.
 
 ### 3) Verify
 
