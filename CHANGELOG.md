@@ -2,9 +2,7 @@
 
 ## 0.6.0
 
-- Added `ALEPH_WORKSPACE_ROOT` environment variable for explicit workspace override.
-- Improved workspace auto-detection: prefers `PWD`/`INIT_CWD` over `os.getcwd()`.
-- Fixes "path escapes workspace root" errors when server starts from install path.
+- Fixed workspace root auto-detection to honor `ALEPH_WORKSPACE_ROOT` and prefer invocation directories (`PWD`/`INIT_CWD`) before falling back to `os.getcwd()`.
 
 ## 0.5.9
 

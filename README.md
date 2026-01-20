@@ -273,10 +273,10 @@ Extractors return `list[dict]` with keys: `value`, `line_num`, `start`, `end`.
 ## Configuration
 
 **Workspace controls:**
-- `ALEPH_WORKSPACE_ROOT` — environment variable to override workspace detection
-- `--workspace-root <path>` — root for relative paths (default: auto-detect from env/cwd)
+- `--workspace-root <path>` — root for relative paths (default: git root from invocation cwd)
 - `--workspace-mode <fixed|git|any>` — path restrictions
 - `--require-confirmation` — require `confirm=true` on action calls
+- `ALEPH_WORKSPACE_ROOT` — override workspace root via environment
 
 **Limits:**
 - `--max-file-size` — max file read (default: 1GB)

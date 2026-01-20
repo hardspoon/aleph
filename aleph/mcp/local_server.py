@@ -505,50 +505,37 @@ def _session_from_payload(
 
     return session
 
-def _resolve_env_dir() -> Path | None:
-    """Return invocation directory from env vars, preferring explicit override."""
-
-    def _resolve_path(value: str, base: Path | None) -> Path:
-        path = Path(value).expanduser()
-        if not path.is_absolute():
-            path = (base or Path.cwd()) / path
-        return path.resolve()
-
-    def _resolve_invocation_dir() -> Path | None:
-        for var in ("PWD", "INIT_CWD"):
-            val = os.environ.get(var)
-            if not val:
-                continue
-            path = _resolve_path(val, base=None)
-            if path.is_dir():
-                return path
+def _resolve_env_dir(name: str, require_exists: bool = True) -> Path | None:
+    value = os.environ.get(name)
+    if value is None:
         return None
-
-    invocation_dir = _resolve_invocation_dir()
-    override = os.environ.get("ALEPH_WORKSPACE_ROOT")
-    if override:
-        path = _resolve_path(override, base=invocation_dir)
-        if path.is_dir():
-            return path
-
-    return invocation_dir
+    value = value.strip()
+    if not value:
+        return None
+    try:
+        path = Path(value).expanduser()
+    except Exception:
+        return None
+    if require_exists and not path.exists():
+        return None
+    try:
+        path = path.resolve()
+    except Exception:
+        pass
+    if path.is_file():
+        return path.parent
+    return path
 
 
 def _detect_workspace_root() -> Path:
-    """Auto-detect workspace root with env override support.
-
-    Detection order:
-    1. ALEPH_WORKSPACE_ROOT env var (explicit override)
-    2. PWD env var (invocation directory)
-    3. INIT_CWD env var (npm/yarn invocation)
-    4. os.getcwd() fallback
-    5. Walk up to find .git from resolved directory
-    """
-    base = _resolve_env_dir() or Path.cwd()
-    for parent in [base, *base.parents]:
+    env_root = _resolve_env_dir("ALEPH_WORKSPACE_ROOT", require_exists=False)
+    if env_root is not None:
+        return env_root
+    cwd = _resolve_env_dir("PWD") or _resolve_env_dir("INIT_CWD") or Path.cwd()
+    for parent in [cwd, *cwd.parents]:
         if (parent / ".git").exists():
             return parent
-    return base
+    return cwd
 
 
 def _nearest_existing_parent(path: Path) -> Path:
@@ -3476,7 +3463,7 @@ def main() -> None:
         "--workspace-root",
         type=str,
         default=None,
-        help="Workspace root for action tools (default: ALEPH_WORKSPACE_ROOT env or auto-detect from PWD/INIT_CWD/cwd)",
+        help="Workspace root for action tools (default: ALEPH_WORKSPACE_ROOT or auto-detect git root from invocation cwd)",
     )
     parser.add_argument(
         "--workspace-mode",

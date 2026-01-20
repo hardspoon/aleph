@@ -12,6 +12,7 @@ This guide covers all configuration options for Aleph, including environment var
 | `ALEPH_SUB_QUERY_URL` | API base URL (fallback: `OPENAI_BASE_URL`) | `https://api.openai.com/v1` |
 | `ALEPH_SUB_QUERY_MODEL` | Model name (required for API) | -- |
 | `ALEPH_MAX_ITERATIONS` | Maximum iterations per session | `100` |
+| `ALEPH_WORKSPACE_ROOT` | Override workspace root for action tools | (auto-detect) |
 
 ## Sub-Query Configuration
 
@@ -139,6 +140,11 @@ aleph --enable-actions --tool-docs concise --workspace-mode git
 # Full tool docs (larger MCP tool list payload)
 aleph --tool-docs full
 ```
+
+**Workspace auto-detection:** If `--workspace-root` is not set, Aleph will:
+1. Use `ALEPH_WORKSPACE_ROOT` if provided.
+2. Otherwise prefer `PWD`/`INIT_CWD` when present.
+3. Fall back to `os.getcwd()` and walk up to the nearest `.git` root.
 
 ## Power Features (Default When Actions Enabled)
 
