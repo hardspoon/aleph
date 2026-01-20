@@ -5,12 +5,16 @@ following the Recursive Language Model (RLM) paradigm.
 
 Backend priority (configurable via ALEPH_SUB_QUERY_BACKEND):
 1. API (if credentials available) - OpenAI-compatible APIs only
-2. CLI backends (claude, codex) - uses existing subscriptions
+2. CLI backends (codex, gemini) - uses existing subscriptions
+   Note: claude CLI is deprioritized as it hangs in MCP/sandbox contexts
 
 Configuration via environment:
 - ALEPH_SUB_QUERY_API_KEY (or OPENAI_API_KEY fallback)
 - ALEPH_SUB_QUERY_URL (or OPENAI_BASE_URL fallback, default: https://api.openai.com/v1)
 - ALEPH_SUB_QUERY_MODEL (required)
+- ALEPH_SUB_QUERY_SHARE_SESSION (share live MCP session with CLI sub-agents)
+- ALEPH_SUB_QUERY_HTTP_HOST / ALEPH_SUB_QUERY_HTTP_PORT / ALEPH_SUB_QUERY_HTTP_PATH
+- ALEPH_SUB_QUERY_MCP_SERVER_NAME (server name exposed to sub-agents)
 """
 
 from __future__ import annotations
@@ -46,12 +50,15 @@ class SubQueryConfig:
     - ALEPH_SUB_QUERY_API_KEY: API key for OpenAI-compatible providers (fallback: OPENAI_API_KEY)
     - ALEPH_SUB_QUERY_URL: Base URL for OpenAI-compatible APIs (fallback: OPENAI_BASE_URL)
     - ALEPH_SUB_QUERY_MODEL: Model name (required)
+    - ALEPH_SUB_QUERY_SHARE_SESSION: Share live MCP session with CLI sub-agents
+    - ALEPH_SUB_QUERY_HTTP_HOST / ALEPH_SUB_QUERY_HTTP_PORT / ALEPH_SUB_QUERY_HTTP_PATH
+    - ALEPH_SUB_QUERY_MCP_SERVER_NAME: Server name exposed to sub-agents
 
     When backend="auto" (default), the priority is:
     1. API - if API credentials are available
-    2. claude CLI - if installed
-    3. codex CLI - if installed
-    4. gemini CLI - if installed
+    2. codex CLI - if installed
+    3. gemini CLI - if installed
+    4. claude CLI - if installed (deprioritized: hangs in MCP/sandbox contexts)
 
     Attributes:
         backend: Which backend to use. "auto" prioritizes API, then CLI.
@@ -120,9 +127,10 @@ def detect_backend(config: SubQueryConfig | None = None) -> BackendType:
     Priority (API-first for reliability and configurability):
     1. Check ALEPH_SUB_QUERY_BACKEND env var for explicit override
     2. api - if API credentials are available
-    3. claude CLI - if installed
-    4. codex CLI - if installed
-    5. api (fallback) - will error if no credentials, but gives helpful message
+    3. codex CLI - if installed
+    4. gemini CLI - if installed
+    5. claude CLI - if installed (deprioritized: hangs in MCP/sandbox contexts)
+    6. api (fallback) - will error if no credentials, but gives helpful message
 
     Returns:
         The detected backend type.
@@ -142,13 +150,14 @@ def detect_backend(config: SubQueryConfig | None = None) -> BackendType:
     if has_api_credentials(cfg):
         return "api"
 
-    # Priority 2-4: CLI backends
-    if shutil.which("claude"):
-        return "claude"
+    # Priority 2-4: CLI backends (codex/gemini preferred over claude)
+    # Note: claude CLI hangs in MCP/sandbox contexts, so it's deprioritized
     if shutil.which("codex"):
         return "codex"
     if shutil.which("gemini"):
         return "gemini"
+    if shutil.which("claude"):
+        return "claude"
 
     # Fallback to API (will error with helpful message if no credentials)
     return "api"

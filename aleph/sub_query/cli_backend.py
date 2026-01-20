@@ -7,7 +7,9 @@ This allows RLM-style recursive reasoning without API keys.
 from __future__ import annotations
 
 import asyncio
-import shlex
+import json
+import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import Literal
@@ -17,6 +19,22 @@ __all__ = ["run_cli_sub_query", "CLI_BACKENDS"]
 
 CLI_BACKENDS = ("claude", "codex", "gemini")
 
+_KEEP_MCP_CONFIG_ENV = "ALEPH_SUB_QUERY_KEEP_MCP_CONFIG"
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _track_cleanup(path: Path, cleanup_paths: list[Path]) -> None:
+    if _env_bool(_KEEP_MCP_CONFIG_ENV, False):
+        print(f"[aleph] Keeping MCP config: {path}", file=sys.stderr)
+    else:
+        cleanup_paths.append(path)
+
 
 async def run_cli_sub_query(
     prompt: str,
@@ -25,6 +43,9 @@ async def run_cli_sub_query(
     timeout: float = 120.0,
     cwd: Path | None = None,
     max_output_chars: int = 50_000,
+    mcp_server_url: str | None = None,
+    mcp_server_name: str = "aleph_shared",
+    trust_mcp_server: bool = True,
 ) -> tuple[bool, str]:
     """Spawn a CLI sub-agent and return its response.
     
@@ -50,16 +71,95 @@ async def run_cli_sub_query(
     try:
         if use_tempfile:
             return await _run_with_tempfile(
-                full_prompt, backend, timeout, cwd, max_output_chars
+                full_prompt,
+                backend,
+                timeout,
+                cwd,
+                max_output_chars,
+                mcp_server_url=mcp_server_url,
+                mcp_server_name=mcp_server_name,
+                trust_mcp_server=trust_mcp_server,
             )
         else:
             return await _run_with_arg(
-                full_prompt, backend, timeout, cwd, max_output_chars
+                full_prompt,
+                backend,
+                timeout,
+                cwd,
+                max_output_chars,
+                mcp_server_url=mcp_server_url,
+                mcp_server_name=mcp_server_name,
+                trust_mcp_server=trust_mcp_server,
             )
     except FileNotFoundError:
         return False, f"CLI backend '{backend}' not found. Install it or use API fallback."
     except Exception as e:
         return False, f"CLI error: {e}"
+
+
+def _codex_mcp_overrides(
+    mcp_server_url: str,
+    mcp_server_name: str,
+    trust_mcp_server: bool,
+) -> list[str]:
+    overrides = [
+        "-c",
+        f"mcp_servers.{mcp_server_name}.transport={json.dumps('streamable_http')}",
+        "-c",
+        f"mcp_servers.{mcp_server_name}.url={json.dumps(mcp_server_url)}",
+    ]
+    if trust_mcp_server:
+        overrides.extend(
+            [
+                "-c",
+                f"mcp_servers.{mcp_server_name}.trust=true",
+            ]
+        )
+    return overrides
+
+
+def _gemini_env_for_mcp(
+    mcp_server_url: str,
+    mcp_server_name: str,
+    trust_mcp_server: bool,
+) -> tuple[dict[str, str], Path]:
+    env = os.environ.copy()
+    payload = {
+        "mcpServers": {
+            mcp_server_name: {
+                "type": "http",
+                "url": mcp_server_url,
+                "trust": trust_mcp_server,
+            }
+        }
+    }
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump(payload, f, ensure_ascii=True, indent=2)
+        settings_path = Path(f.name)
+    env["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] = str(settings_path)
+    return env, settings_path
+
+
+def _claude_mcp_config(
+    mcp_server_url: str,
+    mcp_server_name: str,
+) -> Path:
+    """Create a temp JSON file with MCP config for Claude CLI.
+
+    Claude CLI uses --mcp-config flag to load MCP servers from JSON files.
+    The format is: {"mcpServers": {"name": {"type": "http", "url": "..."}}}
+    """
+    payload = {
+        "mcpServers": {
+            mcp_server_name: {
+                "type": "http",
+                "url": mcp_server_url,
+            }
+        }
+    }
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump(payload, f, ensure_ascii=True, indent=2)
+        return Path(f.name)
 
 
 async def _run_with_arg(
@@ -68,30 +168,48 @@ async def _run_with_arg(
     timeout: float,
     cwd: Path | None,
     max_output_chars: int,
+    mcp_server_url: str | None,
+    mcp_server_name: str,
+    trust_mcp_server: bool,
 ) -> tuple[bool, str]:
     """Run CLI with prompt as argument."""
-    escaped_prompt = shlex.quote(prompt)
+    env: dict[str, str] | None = None
+    cleanup_paths: list[Path] = []
     
     if backend == "claude":
         # Claude Code CLI: -p for print mode (non-interactive), --dangerously-skip-permissions to bypass
-        cmd = ["claude", "-p", prompt, "--dangerously-skip-permissions"]
+        mcp_args: list[str] = []
+        if mcp_server_url:
+            config_path = _claude_mcp_config(mcp_server_url, mcp_server_name)
+            _track_cleanup(config_path, cleanup_paths)
+            mcp_args = ["--mcp-config", str(config_path), "--strict-mcp-config"]
+        cmd = ["claude", "-p", *mcp_args, prompt, "--dangerously-skip-permissions"]
     elif backend == "codex":
         # OpenAI Codex CLI (non-interactive)
-        cmd = ["codex", "exec", "--full-auto", prompt]
+        overrides: list[str] = []
+        if mcp_server_url:
+            overrides = _codex_mcp_overrides(mcp_server_url, mcp_server_name, trust_mcp_server)
+        cmd = ["codex", *overrides, "exec", "--full-auto", prompt]
     elif backend == "gemini":
-        # Google Gemini CLI: -p for prompt mode (non-interactive)
-        cmd = ["gemini", "-p", prompt]
+        # Google Gemini CLI: -y for yolo mode (auto-approve all actions)
+        if mcp_server_url:
+            env, settings_path = _gemini_env_for_mcp(
+                mcp_server_url, mcp_server_name, trust_mcp_server
+            )
+            _track_cleanup(settings_path, cleanup_paths)
+        cmd = ["gemini", "-y", prompt]
     else:
         return False, f"Unknown CLI backend: {backend}"
     
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=str(cwd) if cwd else None,
-    )
-    
     try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.DEVNULL,  # Prevent subprocess from reading MCP stdio.
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(cwd) if cwd else None,
+            env=env,
+        )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         output = stdout.decode("utf-8", errors="replace")
         
@@ -110,6 +228,12 @@ async def _run_with_arg(
         proc.kill()
         await proc.wait()
         return False, f"CLI timeout after {timeout}s"
+    finally:
+        for path in cleanup_paths:
+            try:
+                path.unlink()
+            except Exception:
+                pass
 
 
 async def _run_with_tempfile(
@@ -118,6 +242,9 @@ async def _run_with_tempfile(
     timeout: float,
     cwd: Path | None,
     max_output_chars: int,
+    mcp_server_url: str | None,
+    mcp_server_name: str,
+    trust_mcp_server: bool,
 ) -> tuple[bool, str]:
     """Run CLI with prompt from temp file (for long prompts)."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
@@ -125,17 +252,33 @@ async def _run_with_tempfile(
         temp_path = f.name
     
     try:
+        env: dict[str, str] | None = None
+        cleanup_paths: list[Path] = []
+
         if backend == "claude":
             # Claude reads from stdin with -p flag
-            cmd = ["claude", "-p", "--dangerously-skip-permissions"]
+            mcp_args: list[str] = []
+            if mcp_server_url:
+                config_path = _claude_mcp_config(mcp_server_url, mcp_server_name)
+                _track_cleanup(config_path, cleanup_paths)
+                mcp_args = ["--mcp-config", str(config_path), "--strict-mcp-config"]
+            cmd = ["claude", "-p", *mcp_args, "--dangerously-skip-permissions"]
             stdin_data = prompt.encode("utf-8")
         elif backend == "codex":
             # Codex reads prompt from stdin when "-" is passed
-            cmd = ["codex", "exec", "--full-auto", "-"]
+            overrides: list[str] = []
+            if mcp_server_url:
+                overrides = _codex_mcp_overrides(mcp_server_url, mcp_server_name, trust_mcp_server)
+            cmd = ["codex", *overrides, "exec", "--full-auto", "-"]
             stdin_data = prompt.encode("utf-8")
         elif backend == "gemini":
-            # Gemini reads from stdin with -p flag
-            cmd = ["gemini", "-p"]
+            # Gemini: -y for yolo mode, pass prompt via stdin
+            if mcp_server_url:
+                env, settings_path = _gemini_env_for_mcp(
+                    mcp_server_url, mcp_server_name, trust_mcp_server
+                )
+                _track_cleanup(settings_path, cleanup_paths)
+            cmd = ["gemini", "-y"]
             stdin_data = prompt.encode("utf-8")
         else:
             return False, f"Unknown CLI backend: {backend}"
@@ -146,6 +289,7 @@ async def _run_with_tempfile(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(cwd) if cwd else None,
+            env=env,
         )
         
         try:
@@ -169,6 +313,12 @@ async def _run_with_tempfile(
             proc.kill()
             await proc.wait()
             return False, f"CLI timeout after {timeout}s"
+        finally:
+            for path in cleanup_paths:
+                try:
+                    path.unlink()
+                except Exception:
+                    pass
     finally:
         # Clean up temp file
         try:

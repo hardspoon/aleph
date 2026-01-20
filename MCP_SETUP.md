@@ -23,6 +23,35 @@ This enables:
 - **Any git repo access** (not limited to a single workspace root)
 - **Concise tool descriptions** (cleaner MCP tool list)
 
+## Shared Sub-Query Sessions (Live Sandbox)
+
+If you want CLI sub-agents spawned via `sub_query` to access the **same live Aleph session**
+(tools, contexts, and sandbox state), enable streamable HTTP sharing:
+
+```json
+{
+  "mcpServers": {
+    "aleph": {
+      "command": "aleph",
+      "args": ["--enable-actions", "--workspace-mode", "any", "--tool-docs", "concise"],
+      "env": {
+        "ALEPH_SUB_QUERY_SHARE_SESSION": "true",
+        "ALEPH_SUB_QUERY_HTTP_PORT": "8765",
+        "ALEPH_SUB_QUERY_MCP_SERVER_NAME": "aleph_shared"
+      }
+    }
+  }
+}
+```
+
+Notes:
+- The Aleph server will spin up a **local streamable HTTP endpoint** on demand.
+- CLI sub-agents (claude/codex/gemini) will be pointed at that live server automatically.
+- Customize host/path with `ALEPH_SUB_QUERY_HTTP_HOST` and `ALEPH_SUB_QUERY_HTTP_PATH` if needed.
+- Tools will be exposed under the server name you choose (default: `aleph_shared`).
+- `aleph_shared` avoids conflicts with an existing `aleph` stdio entry in Codex config.
+- For Claude, the shared session is passed via `--mcp-config` and `--strict-mcp-config` flags.
+
 For even higher limits:
 ```json
 {

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.9
+
+- Fixed `sub_query` to auto-inject session context when `context_slice` is omitted.
+- Added shared session support for CLI sub-agents (codex/gemini/claude) via streamable HTTP.
+- Deprioritized `claude` CLI backend (hangs in MCP/sandbox contexts); new order: api → codex → gemini → claude.
+- Fixed stdin handling in CLI backends to prevent subprocess from stealing MCP stdio.
+
 ## 0.5.8
 
 - Added smart loaders for PDF/DOCX/HTML and compressed logs (.gz/.bz2/.xz) in `load_file`.

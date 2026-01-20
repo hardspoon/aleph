@@ -79,6 +79,28 @@ def _get_env_float(name: str, default: float) -> float:
         return default
 
 
+def _get_env_int(name: str, default: int) -> int:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def _get_env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    value = value.strip().lower()
+    if value in {"1", "true", "yes", "y", "on"}:
+        return True
+    if value in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
 DEFAULT_REMOTE_TOOL_TIMEOUT_SECONDS = _get_env_float(
     "ALEPH_REMOTE_TOOL_TIMEOUT",
     120.0,
@@ -643,6 +665,12 @@ class AlephMCPServerLocal:
         self._sessions: dict[str, _Session] = {}
         self._remote_servers: dict[str, _RemoteServerHandle] = {}
         self._auto_pack_loaded = False
+        self._streamable_http_task: asyncio.Task | None = None
+        self._streamable_http_url: str | None = None
+        self._streamable_http_host: str | None = None
+        self._streamable_http_port: int | None = None
+        self._streamable_http_path: str | None = None
+        self._streamable_http_lock = asyncio.Lock()
 
         # Import MCP lazily so it's an optional dependency
         try:
@@ -695,6 +723,108 @@ class AlephMCPServerLocal:
             except Exception:
                 continue
             self._sessions[resolved_id] = session
+
+    def _normalize_streamable_http_path(self, path: str) -> str:
+        if not path:
+            return "/mcp"
+        return path if path.startswith("/") else f"/{path}"
+
+    def _format_streamable_http_url(self, host: str, port: int, path: str) -> str:
+        connect_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+        return f"http://{connect_host}:{port}{path}"
+
+    async def _wait_for_streamable_http_ready(
+        self,
+        host: str,
+        port: int,
+        timeout_seconds: float = 2.0,
+    ) -> tuple[bool, str]:
+        deadline = time.monotonic() + timeout_seconds
+        connect_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+
+        while time.monotonic() < deadline:
+            if self._streamable_http_task and self._streamable_http_task.done():
+                exc = self._streamable_http_task.exception()
+                if exc:
+                    return False, f"Streamable HTTP server failed to start: {exc}"
+                return False, "Streamable HTTP server stopped unexpectedly."
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(connect_host, port),
+                    timeout=0.2,
+                )
+                writer.close()
+                await writer.wait_closed()
+                return True, ""
+            except Exception:
+                await asyncio.sleep(0.05)
+
+        return False, f"Timed out waiting for streamable HTTP server on {connect_host}:{port}."
+
+    async def _run_streamable_http_server(self, host: str, port: int) -> None:
+        try:
+            import uvicorn
+        except Exception as exc:
+            raise RuntimeError(
+                "uvicorn is required for streamable HTTP transport. "
+                "Install with: pip install uvicorn"
+            ) from exc
+
+        app = self.server.streamable_http_app()
+        config = uvicorn.Config(
+            app,
+            host=host,
+            port=port,
+            log_level="warning",
+            access_log=False,
+            lifespan="on",
+        )
+        server = uvicorn.Server(config)
+        await server.serve()
+
+    async def _ensure_streamable_http_server(
+        self,
+        host: str,
+        port: int,
+        path: str,
+    ) -> tuple[bool, str]:
+        normalized_path = self._normalize_streamable_http_path(path)
+        async with self._streamable_http_lock:
+            if self._streamable_http_task and not self._streamable_http_task.done():
+                url = self._streamable_http_url or self._format_streamable_http_url(
+                    host,
+                    port,
+                    normalized_path,
+                )
+                return True, url
+            if self._streamable_http_task and self._streamable_http_task.done():
+                self._streamable_http_task = None
+                self._streamable_http_url = None
+
+            self.server.settings.host = host
+            self.server.settings.port = port
+            self.server.settings.streamable_http_path = normalized_path
+
+            self._streamable_http_task = asyncio.create_task(
+                self._run_streamable_http_server(host, port)
+            )
+            self._streamable_http_host = host
+            self._streamable_http_port = port
+            self._streamable_http_path = normalized_path
+            self._streamable_http_url = self._format_streamable_http_url(
+                host,
+                port,
+                normalized_path,
+            )
+
+        ok, err = await self._wait_for_streamable_http_ready(host, port)
+        if not ok:
+            return False, err
+        return True, self._streamable_http_url or self._format_streamable_http_url(
+            host,
+            port,
+            normalized_path,
+        )
 
     async def _ensure_remote_server(self, server_id: str) -> tuple[bool, str | _RemoteServerHandle]:
         """Ensure a remote MCP server is connected and initialized."""
@@ -2650,20 +2780,27 @@ class AlephMCPServerLocal:
 
             Backend priority (when backend="auto"):
             1. API - if ALEPH_SUB_QUERY_API_KEY or OPENAI_API_KEY is set (most reliable)
-            2. claude CLI - if installed
-            3. codex CLI - if installed
-            4. gemini CLI - if installed
+            2. codex CLI - if installed
+            3. gemini CLI - if installed
+            4. claude CLI - if installed (deprioritized: hangs in MCP/sandbox contexts)
 
             Configure via environment:
             - ALEPH_SUB_QUERY_BACKEND: Force specific backend ("api", "claude", "codex", "gemini")
             - ALEPH_SUB_QUERY_API_KEY or OPENAI_API_KEY: API credentials
             - ALEPH_SUB_QUERY_URL or OPENAI_BASE_URL: Custom endpoint for OpenAI-compatible APIs
             - ALEPH_SUB_QUERY_MODEL: Model name (required)
+            - ALEPH_SUB_QUERY_SHARE_SESSION: "true"/"false" to share the live MCP session with CLI sub-agents
+            - ALEPH_SUB_QUERY_HTTP_HOST: Host for the streamable HTTP server (default: 127.0.0.1)
+            - ALEPH_SUB_QUERY_HTTP_PORT: Port for the streamable HTTP server (default: 8765)
+            - ALEPH_SUB_QUERY_HTTP_PATH: Path for the streamable HTTP server (default: /mcp)
+            - ALEPH_SUB_QUERY_MCP_SERVER_NAME: MCP server name exposed to sub-agents (default: aleph_shared)
 
             Args:
                 prompt: The question/task for the sub-agent
-                context_slice: Optional context to include (e.g., a chunk from ctx)
-                context_id: Session to record evidence in
+                context_slice: Optional context to include (e.g., a chunk from ctx).
+                    If not provided, automatically uses the context from context_id session.
+                context_id: Session to use. If context_slice is not provided, the session's
+                    loaded context is automatically passed to the sub-agent.
                 backend: "auto", "claude", "codex", "gemini", or "api"
 
             Returns:
@@ -2680,6 +2817,14 @@ class AlephMCPServerLocal:
             session = self._sessions.get(context_id)
             if session:
                 session.iterations += 1
+
+            # Auto-inject context from session if context_slice not provided
+            # This matches the RLM pattern: if you specify a context_id, the sub-agent
+            # should have access to that context without needing to pass it explicitly.
+            if not context_slice and session:
+                ctx_val = session.repl.get_variable("ctx")
+                if ctx_val is not None:
+                    context_slice = _coerce_context_to_text(ctx_val)
 
             # Truncate context if needed
             truncated = False
@@ -2699,6 +2844,30 @@ class AlephMCPServerLocal:
             try:
                 # Try CLI first, fall back to API
                 if resolved_backend in CLI_BACKENDS:
+                    mcp_server_url = None
+                    share_session = _get_env_bool("ALEPH_SUB_QUERY_SHARE_SESSION", False)
+                    if share_session and resolved_backend in {"claude", "codex", "gemini"}:
+                        host = os.environ.get("ALEPH_SUB_QUERY_HTTP_HOST", "127.0.0.1")
+                        port = _get_env_int("ALEPH_SUB_QUERY_HTTP_PORT", 8765)
+                        path = os.environ.get("ALEPH_SUB_QUERY_HTTP_PATH", "/mcp")
+                        server_name = os.environ.get(
+                            "ALEPH_SUB_QUERY_MCP_SERVER_NAME",
+                            "aleph_shared",
+                        ).strip() or "aleph_shared"
+                        ok, url_or_err = await self._ensure_streamable_http_server(host, port, path)
+                        if not ok:
+                            return (
+                                "## Sub-Query Error\n\n"
+                                f"**Backend:** `{resolved_backend}`\n\n"
+                                f"Failed to start streamable HTTP server: {url_or_err}"
+                            )
+                        mcp_server_url = url_or_err
+                        prompt = (
+                            f"{prompt}\n\n"
+                            f"[MCP tools are available via the live Aleph server. "
+                            f"Use context_id={context_id!r} when calling tools. "
+                            f"Tools are prefixed with `mcp__{server_name}__`.]"
+                        )
                     success, output = await run_cli_sub_query(
                         prompt=prompt,
                         context_slice=context_slice,
@@ -2706,6 +2875,9 @@ class AlephMCPServerLocal:
                         timeout=self.sub_query_config.cli_timeout_seconds,
                         cwd=self.action_config.workspace_root if self.action_config.enabled else None,
                         max_output_chars=self.sub_query_config.cli_max_output_chars,
+                        mcp_server_url=mcp_server_url,
+                        mcp_server_name=server_name if mcp_server_url else "aleph_shared",
+                        trust_mcp_server=True,
                     )
                 else:
                     success, output = await run_api_sub_query(
