@@ -106,7 +106,12 @@ If this client uses a different skill/command folder, ask me where to place it.
 3) Verify: run get_status() or list_contexts().
 If tools are namespaced, use mcp__aleph__get_status or mcp__aleph__list_contexts.
 
-4) Use the skill: /aleph (Claude Code) or $aleph (Codex CLI).
+4) (Optional) Enable sub_query (recursive sub-agent):
+- CLI backend (no API key): set ALEPH_SUB_QUERY_BACKEND=claude|codex|gemini
+- API backend: set ALEPH_SUB_QUERY_API_KEY + ALEPH_SUB_QUERY_MODEL (+ optional ALEPH_SUB_QUERY_URL)
+If env vars can't be set in the MCP config, add them to your shell profile and restart.
+
+5) Use the skill: /aleph (Claude Code) or $aleph (Codex CLI).
 Gemini CLI: /skills list (use /skills enable aleph if disabled).
 ```
 
@@ -239,7 +244,7 @@ exec_python(code="print(extract_classes())", context_id="repo_hits")
 - `think`, `evaluate_progress`, `summarize_so_far`, `get_evidence`, `finalize` — structured reasoning
 - `tasks` — lightweight task tracking per context
 - `get_status` — session state
-- `sub_query` — spawn recursive sub-agents
+- `sub_query` — spawn recursive sub-agents (CLI or API backend)
 
 <details>
 <summary><strong>exec_python helpers</strong></summary>
