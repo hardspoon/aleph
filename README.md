@@ -79,6 +79,37 @@ get_status()
 
 If using Claude Code, tools are prefixed: `mcp__aleph__get_status`.
 
+## AI Assistant Setup (MCP + `/aleph` Skill) — Copy/Paste
+
+Paste this into any AI coding assistant or agentic coder to add Aleph (MCP server + `/aleph` skill):
+
+```
+You are an AI coding assistant. Please set up Aleph (Model Context Protocol / MCP).
+
+1) Add the Aleph MCP server config:
+{
+  "mcpServers": {
+    "aleph": {
+      "command": "aleph",
+      "args": ["--enable-actions", "--workspace-mode", "any"]
+    }
+  }
+}
+
+2) Install the /aleph skill prompt:
+- Claude Code: copy docs/prompts/aleph.md -> ~/.claude/commands/aleph.md
+- Codex CLI: copy docs/prompts/aleph.md -> ~/.codex/skills/aleph/SKILL.md
+- Gemini CLI: copy docs/prompts/aleph.md -> ~/.gemini/skills/aleph/SKILL.md
+  Ensure ~/.gemini/settings.json has "experimental": { "skills": true } and restart.
+If this client uses a different skill/command folder, ask me where to place it.
+
+3) Verify: run get_status() or list_contexts().
+If tools are namespaced, use mcp__aleph__get_status or mcp__aleph__list_contexts.
+
+4) Use the skill: /aleph (Claude Code) or $aleph (Codex CLI).
+Gemini CLI: /skills list (use /skills enable aleph if disabled).
+```
+
 ## The `/aleph` Skill
 
 The `/aleph` skill is a prompt that teaches your LLM how to use Aleph effectively. It provides workflow patterns, tool guidance, and troubleshooting tips.
@@ -174,11 +205,36 @@ exec_python(code="emails = extract_emails(); print(emails)", context_id="logs")
 # → [{'value': 'user@example.com', 'line_num': 0, 'start': 50, 'end': 66}, ...]
 ```
 
+### Advanced Workflows
+
+**Multi-Context Workflow (code + docs + diffs)**
+
+Load multiple sources, then compare or reconcile them:
+
+```python
+# Load a design doc and a repo snapshot (or any two sources)
+load_context(content=design_doc_text, context_id="spec")
+rg_search(pattern="AuthService|JWT|token", paths=["."], load_context_id="repo_hits", confirm=true)
+
+# Compare or reconcile
+diff_contexts(a="spec", b="repo_hits")
+search_context(pattern="missing|TODO|mismatch", context_id="repo_hits")
+```
+
+**Advanced Querying with `exec_python`**
+
+Treat `exec_python` as a reasoning tool, not just code execution:
+
+```python
+# Example: extract class names or key sections programmatically
+exec_python(code="print(extract_classes())", context_id="repo_hits")
+```
+
 ## Tools
 
 **Core** (always available):
 - `load_context`, `list_contexts`, `diff_contexts` — manage in-memory data
-- `search_context`, `semantic_search`, `peek_context`, `chunk_context` — explore loaded data
+- `search_context`, `semantic_search`, `peek_context`, `chunk_context` — explore data; use `semantic_search` for concepts/fuzzy queries, `search_context` for precise regex
 - `exec_python`, `get_variable` — compute in sandbox (100+ built-in helpers)
 - `think`, `evaluate_progress`, `summarize_so_far`, `get_evidence`, `finalize` — structured reasoning
 - `tasks` — lightweight task tracking per context
