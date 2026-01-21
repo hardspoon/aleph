@@ -12,7 +12,7 @@ import hashlib
 import math
 import re
 from collections import Counter
-from typing import TypedDict, Any, Callable, Sequence, Iterable
+from typing import TypedDict, Any, Callable, Sequence
 
 
 # =============================================================================
@@ -516,7 +516,9 @@ def grep_v(ctx: object, pattern: str, flags: int = 0) -> list[str]:
 
 def grep_c(ctx: object, pattern: str, flags: int = 0) -> int:
     """Count lines matching pattern (like grep -c)."""
-    return len(grep(ctx, pattern, flags))
+    text = _to_text(ctx)
+    rx = re.compile(pattern, flags=flags)
+    return sum(1 for line in text.splitlines() if rx.search(line))
 
 
 def uniq(ctx: object) -> list[str]:
@@ -754,16 +756,12 @@ def first_match(ctx: object, pattern: str, flags: int = 0) -> str | None:
 # Semantic search (lightweight embeddings)
 # =============================================================================
 
-def _tokenize(text: str) -> list[str]:
-    return re.findall(r"[A-Za-z0-9_]+", text.lower())
-
-
 def embed_text(text: str, dim: int = 256) -> list[float]:
     """Create a lightweight hashed embedding for text."""
     if dim <= 0:
         raise ValueError("dim must be > 0")
     vec = [0.0] * dim
-    for token in _tokenize(text):
+    for token in re.findall(r"[A-Za-z0-9_]+", text.lower()):
         if len(token) < 2:
             continue
         digest = hashlib.blake2b(token.encode("utf-8"), digest_size=4).digest()
@@ -1066,3 +1064,117 @@ def slugify(text: str) -> str:
     text = re.sub(r'[^\w\s-]', '', text)
     text = re.sub(r'[-\s]+', '-', text)
     return text.strip('-')
+
+
+CONTEXT_HELPER_NAMES: tuple[str, ...] = (
+    "peek",
+    "lines",
+    "search",
+    "chunk",
+    "extract_numbers",
+    "extract_money",
+    "extract_percentages",
+    "extract_dates",
+    "extract_times",
+    "extract_timestamps",
+    "extract_emails",
+    "extract_urls",
+    "extract_ips",
+    "extract_phones",
+    "extract_hex",
+    "extract_uuids",
+    "extract_paths",
+    "extract_env_vars",
+    "extract_versions",
+    "extract_hashes",
+    "extract_functions",
+    "extract_classes",
+    "extract_imports",
+    "extract_comments",
+    "extract_routes",
+    "extract_strings",
+    "extract_todos",
+    "extract_log_levels",
+    "extract_exceptions",
+    "extract_json_objects",
+    "word_count",
+    "char_count",
+    "line_count",
+    "sentence_count",
+    "paragraph_count",
+    "unique_words",
+    "word_frequency",
+    "ngrams",
+    "head",
+    "tail",
+    "grep",
+    "grep_v",
+    "grep_c",
+    "uniq",
+    "sort_lines",
+    "number_lines",
+    "strip_lines",
+    "blank_lines",
+    "non_blank_lines",
+    "columns",
+    "replace_all",
+    "split_by",
+    "between",
+    "before",
+    "after",
+    "truncate",
+    "wrap_text",
+    "indent_text",
+    "dedent_text",
+    "normalize_whitespace",
+    "remove_punctuation",
+    "to_lower",
+    "to_upper",
+    "to_title",
+    "contains",
+    "contains_any",
+    "contains_all",
+    "count_matches",
+    "find_all",
+    "first_match",
+    "semantic_search",
+)
+
+STANDALONE_HELPER_NAMES: tuple[str, ...] = (
+    "diff",
+    "similarity",
+    "common_lines",
+    "diff_lines",
+    "embed_text",
+    "dedupe",
+    "flatten",
+    "first",
+    "last",
+    "take",
+    "drop",
+    "partition",
+    "group_by",
+    "frequency",
+    "sample_items",
+    "shuffle_items",
+    "is_numeric",
+    "is_email",
+    "is_url",
+    "is_ip",
+    "is_uuid",
+    "is_json",
+    "is_blank",
+    "to_json",
+    "from_json",
+    "to_csv_row",
+    "from_csv_row",
+    "to_int",
+    "to_float",
+    "to_snake_case",
+    "to_camel_case",
+    "to_pascal_case",
+    "to_kebab_case",
+    "slugify",
+)
+
+LINE_NUMBER_HELPERS: set[str] = {"search"}
