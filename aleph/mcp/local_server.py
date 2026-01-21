@@ -1303,7 +1303,8 @@ class AlephMCPServerLocal:
             timeout = timeout_seconds if timeout_seconds is not None else self.action_config.max_cmd_seconds
 
             if shell:
-                argv = ["/bin/zsh", "-lc", cmd]
+                user_shell = os.environ.get("SHELL", "/bin/sh")
+                argv = [user_shell, "-lc", cmd]
             else:
                 argv = shlex.split(cmd)
                 if not argv:
