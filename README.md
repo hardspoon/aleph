@@ -10,6 +10,12 @@ Aleph is an [MCP server](https://modelcontextprotocol.io/) that gives any LLM ac
 
 Based on the [Recursive Language Model](https://arxiv.org/abs/2512.24601) (RLM) architecture.
 
+## RLM Updates (0.7.0)
+
+- Sub-queries now work directly inside the REPL via `exec_python` (including CLI backends: codex/claude/gemini).
+- Runtime backend switching via `set_backend()` or the `configure()` MCP tool—no restart needed.
+- New CLI flags: `--sub-query-backend`, `--sub-query-timeout`, `--sub-query-share-session`.
+
 ## Use Cases
 
 | Scenario | What Aleph Does |
