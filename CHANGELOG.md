@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.1
+
+- Enhanced system prompt with RLM paper examples (arXiv:2512.24601 Appendix D patterns).
+- Added sub-query batching efficiency guidance: ~100-200K chars per call, avoid 1000s of small calls.
+- New /aleph skill examples: iterative document analysis, regex-targeted sub-queries, answer verification pattern.
+- Improved documentation alignment with RLM paper's best practices.
+
 ## 0.7.0
 
 - New: CLI flags for sub-query configuration (`--sub-query-backend`, `--sub-query-timeout`, `--sub-query-share-session`).

@@ -102,14 +102,27 @@ semantic_search(query="login failure", context_id="doc", top_k=3)
 peek_context(start=1200, end=1600, unit="chars", context_id="doc")
 ```
 
-## Sub-Query Guidance
+## Sub-Query Guidance (RLM Best Practices)
 
 Use sub-queries inside `exec_python` so the recursion is driven by code (symbolic loops),
-not by repeated tool calls. Provide strict output formats when you plan to parse results.
+not by repeated tool calls. This follows the Recursive Language Model (RLM) paradigm.
+
+### Batching Efficiency (CRITICAL)
+
+Sub-LLMs can handle ~500K characters per call. **Batch aggressively to minimize API costs!**
+
+| Context Size | Bad Approach | Good Approach |
+|-------------|--------------|---------------|
+| 1M chars | 1000 sub_query calls (1K each) | 5-10 calls (~100-200K each) |
+| 100K chars | 100 sub_query calls (1K each) | 1-2 calls (~50-100K each) |
+
+**Rule of thumb:** Aim for ~100-200K characters per sub_query call.
+
+### Example 1: Basic Chunking
 
 ```
 exec_python(code=\"\"\"
-chunks = chunk(100000)
+chunks = chunk(100000)  # 100K char chunks
 summaries = sub_query_batch(\"Summarize this chunk:\", chunks)
 final = sub_query_strict(
     f\"Combine summaries into 5 bullets: {summaries}\",
@@ -117,6 +130,83 @@ final = sub_query_strict(
     max_retries=2,
 )
 print(final)
+\"\"\", context_id=\"doc\")
+```
+
+### Example 2: Iterative Document Analysis
+
+For structured documents (books, papers, logs), iterate section-by-section:
+
+```
+exec_python(code=\"\"\"
+query = "What caused the system failure?"
+buffers = []
+
+# Split by sections/headers
+import re
+sections = re.split(r'\\n## ', ctx)
+
+for i, section in enumerate(sections):
+    if len(section) < 500:  # skip tiny sections
+        continue
+    summary = sub_query(
+        f"Extract info relevant to: {query}",
+        context_slice=section
+    )
+    buffers.append(f"Section {i}: {summary}")
+    print(f"Processed section {i}/{len(sections)}")
+
+# Final aggregation
+final = sub_query(
+    f"Based on these findings, answer: {query}\\n\\n" + "\\n".join(buffers)
+)
+print(f"ANSWER: {final}")
+\"\"\", context_id=\"doc\")
+```
+
+### Example 3: Regex-Targeted Sub-Queries
+
+When you know what to look for, use regex to narrow down, then sub-query on hits:
+
+```
+exec_python(code=\"\"\"
+# Find relevant sections first
+hits = search(r"error|exception|failed", max_results=20)
+answers = []
+
+for hit in hits:
+    # Get surrounding context (100 lines)
+    start = max(0, hit['line_num'] - 50)
+    end = hit['line_num'] + 50
+    snippet = lines(start, end)
+
+    answer = sub_query(
+        f"What error occurred here and what's the root cause?",
+        context_slice=snippet
+    )
+    answers.append(f"Line {hit['line_num']}: {answer}")
+
+# Aggregate findings
+print("\\n".join(answers))
+\"\"\", context_id=\"doc\")
+```
+
+### Example 4: Answer Verification Pattern
+
+Use sub-queries to verify answers and avoid context rot:
+
+```
+exec_python(code=\"\"\"
+# First pass: extract candidate answer
+candidate = sub_query("What is the magic number mentioned?", ctx[:200000])
+print(f"Candidate: {candidate}")
+
+# Verification pass: confirm with different context slice
+verification = sub_query(
+    f"Is '{candidate}' the correct magic number? Verify from this context.",
+    ctx[200000:400000]
+)
+print(f"Verification: {verification}")
 \"\"\", context_id=\"doc\")
 ```
 
