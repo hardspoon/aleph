@@ -19,6 +19,7 @@ import builtins
 import asyncio
 import ctypes
 import inspect
+import re
 import signal
 import sys
 import threading
@@ -450,6 +451,89 @@ class REPLEnvironment:
             self._evidence.append(citation)
             return citation
 
+        def _require_sub_query() -> Callable[[str, str | None], object]:
+            fn = self._namespace.get("sub_query")
+            if not callable(fn):
+                raise RuntimeError("sub_query is not available in this REPL session")
+            return fn
+
+        def _sub_query_map(
+            prompts: Sequence[str],
+            context_slices: Sequence[str] | None = None,
+            limit: int | None = None,
+        ) -> list[str]:
+            if isinstance(prompts, str):
+                raise TypeError("prompts must be a sequence of strings, not a string")
+            prompt_list = list(prompts)
+            if limit is not None:
+                if limit <= 0:
+                    raise ValueError("limit must be positive")
+                prompt_list = prompt_list[:limit]
+            slices_list: list[str] | None = None
+            if context_slices is not None:
+                if isinstance(context_slices, str):
+                    raise TypeError("context_slices must be a sequence of strings, not a string")
+                slices_list = list(context_slices)
+                if limit is not None:
+                    slices_list = slices_list[:limit]
+                if len(slices_list) != len(prompt_list):
+                    raise ValueError("context_slices length must match prompts length")
+            results: list[str] = []
+            sub = _require_sub_query()
+            for idx, prompt in enumerate(prompt_list):
+                slice_val = slices_list[idx] if slices_list is not None else None
+                result = sub(prompt, slice_val)
+                results.append(str(result))
+            return results
+
+        def _sub_query_batch(
+            prompt: str,
+            context_slices: Sequence[str],
+            limit: int | None = None,
+        ) -> list[str]:
+            if isinstance(context_slices, str):
+                raise TypeError("context_slices must be a sequence of strings, not a string")
+            slices_list = list(context_slices)
+            if limit is not None:
+                if limit <= 0:
+                    raise ValueError("limit must be positive")
+                slices_list = slices_list[:limit]
+            prompts = [prompt] * len(slices_list)
+            return _sub_query_map(prompts, context_slices=slices_list)
+
+        def _sub_query_strict(
+            prompt: str,
+            context_slice: str | None = None,
+            validate_regex: str | None = None,
+            max_retries: int = 0,
+            retry_prompt: str | None = None,
+        ) -> str:
+            if not validate_regex:
+                sub = _require_sub_query()
+                return str(sub(prompt, context_slice))
+            try:
+                pattern = re.compile(validate_regex, re.MULTILINE)
+            except re.error as e:
+                raise ValueError(f"Invalid validation regex: {e}")
+            base_prompt = prompt
+            retry_note = retry_prompt or (
+                "The previous output did not match the required format. "
+                "Respond again and match the required format exactly."
+            )
+            attempt = 0
+            sub = _require_sub_query()
+            while True:
+                result = str(sub(prompt, context_slice))
+                if pattern.search(result):
+                    return result
+                if attempt >= max_retries:
+                    raise ValueError(
+                        f"sub_query output failed validation regex {validate_regex!r} "
+                        f"after {attempt + 1} attempt(s). Last output: {result}"
+                    )
+                attempt += 1
+                prompt = f"{base_prompt}\n\n{retry_note}\nRequired format regex: {validate_regex}"
+
         # Core context-aware helpers (operate on ctx by default)
         ctx_getter = lambda: self._namespace[context_var_name]
 
@@ -479,6 +563,9 @@ class REPLEnvironment:
             "allowed_imports": lambda: list(self.config.allowed_imports),
             "is_import_allowed": lambda name: name.split(".", 1)[0] in self.config.allowed_imports,
             "blocked_names": lambda: sorted(FORBIDDEN_NAMES),
+            "sub_query_map": _sub_query_map,
+            "sub_query_batch": _sub_query_batch,
+            "sub_query_strict": _sub_query_strict,
         }
 
         for name in CONTEXT_HELPER_NAMES:

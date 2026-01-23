@@ -8,24 +8,47 @@ This guide covers all configuration options for Aleph, including environment var
 |----------|---------|---------|
 | `ALEPH_WORKSPACE_ROOT` | Override workspace root detection | auto-detect |
 | `ALEPH_SUB_QUERY_BACKEND` | Force sub-query backend | `auto` |
+| `ALEPH_SUB_QUERY_TIMEOUT` | Sub-query timeout in seconds | CLI 120 / API 60 |
+| `ALEPH_SUB_QUERY_SHARE_SESSION` | Share MCP session with CLI sub-agents | `false` |
 | `ALEPH_SUB_QUERY_API_KEY` | API key (fallback: `OPENAI_API_KEY`) | -- |
 | `ALEPH_SUB_QUERY_URL` | API base URL (fallback: `OPENAI_BASE_URL`) | `https://api.openai.com/v1` |
 | `ALEPH_SUB_QUERY_MODEL` | Model name (required for API) | -- |
+| `ALEPH_SUB_QUERY_HTTP_HOST` | Host for shared MCP session | `127.0.0.1` |
+| `ALEPH_SUB_QUERY_HTTP_PORT` | Port for shared MCP session | `8765` |
+| `ALEPH_SUB_QUERY_HTTP_PATH` | Path for shared MCP session | `/mcp` |
+| `ALEPH_SUB_QUERY_MCP_SERVER_NAME` | Server name exposed to sub-agents | `aleph_shared` |
 | `ALEPH_MAX_ITERATIONS` | Maximum iterations per session | `100` |
-| `ALEPH_WORKSPACE_ROOT` | Override workspace root for action tools | (auto-detect) |
 
 ## Sub-Query Configuration
 
 The `sub_query` tool spawns independent sub-agents for recursive reasoning. It can use an API backend (OpenAI-compatible) or a local CLI backend (Claude, Codex, Gemini).
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ALEPH_SUB_QUERY_BACKEND` | Backend override (`auto`, `api`, `codex`, `gemini`, `claude`) | `auto` |
+| `ALEPH_SUB_QUERY_TIMEOUT` | Timeout in seconds for CLI + API sub-queries | CLI 120 / API 60 |
+| `ALEPH_SUB_QUERY_SHARE_SESSION` | Share MCP session with CLI sub-agents | `false` |
+| `ALEPH_SUB_QUERY_HTTP_HOST` | Host for shared MCP session | `127.0.0.1` |
+| `ALEPH_SUB_QUERY_HTTP_PORT` | Port for shared MCP session | `8765` |
+| `ALEPH_SUB_QUERY_HTTP_PATH` | Path for shared MCP session | `/mcp` |
+| `ALEPH_SUB_QUERY_MCP_SERVER_NAME` | MCP server name exposed to sub-agents | `aleph_shared` |
+| `ALEPH_SUB_QUERY_API_KEY` | API key for OpenAI-compatible providers | `OPENAI_API_KEY` |
+| `ALEPH_SUB_QUERY_URL` | API base URL | `OPENAI_BASE_URL` or `https://api.openai.com/v1` |
+| `ALEPH_SUB_QUERY_MODEL` | API model name | (required) |
+| `ALEPH_SUB_QUERY_VALIDATION_REGEX` | Default validation regex for strict output | (unset) |
+| `ALEPH_SUB_QUERY_MAX_RETRIES` | Default retries after validation failure | `0` |
+| `ALEPH_SUB_QUERY_RETRY_PROMPT` | Retry prompt suffix | (default text) |
 
 ### Backend Priority (auto mode)
 
 When `ALEPH_SUB_QUERY_BACKEND` is not set or set to `auto`:
 
 1. **API** -- if any API credentials are available
-2. **claude CLI** -- if installed (uses Claude Code subscription)
-3. **codex CLI** -- if installed (uses OpenAI subscription)
-4. **gemini CLI** -- if installed (uses Google Gemini subscription)
+2. **codex CLI** -- if installed (uses OpenAI subscription)
+3. **gemini CLI** -- if installed (uses Google Gemini subscription)
+4. **claude CLI** -- if installed (uses Claude Code subscription)
 
 ### Force a Specific Backend
 
@@ -41,7 +64,57 @@ export ALEPH_SUB_QUERY_BACKEND=codex
 
 # Force Gemini CLI
 export ALEPH_SUB_QUERY_BACKEND=gemini
+
+# Return to auto selection
+export ALEPH_SUB_QUERY_BACKEND=auto
 ```
+
+### CLI Flags (sub-query)
+
+These flags set environment variables before the MCP server starts:
+
+```bash
+aleph --sub-query-backend claude
+aleph --sub-query-timeout 90
+aleph --sub-query-share-session true
+
+# Combined
+aleph --sub-query-backend codex --sub-query-timeout 120 --sub-query-share-session false
+```
+
+### Runtime Configuration
+
+**MCP tool:**
+
+```python
+mcp__aleph__configure(sub_query_backend="claude")
+mcp__aleph__configure(sub_query_timeout=90, sub_query_share_session=True)
+```
+
+**REPL helpers:**
+
+```python
+set_backend("gemini")
+get_config()
+```
+
+### Runtime Switching (No Restart)
+
+Users can ask the LLM to switch backends naturally:
+- "Use the Claude backend for sub-queries"
+- "Switch to Gemini"
+- "aleph sub-query codex"
+
+The LLM calls `set_backend("claude")` or `configure(sub_query_backend="claude")` — takes effect immediately.
+
+### Backend Comparison
+
+| Backend | Speed | Cost | Capabilities |
+|---------|-------|------|--------------|
+| `api` | Variable (provider-dependent) | Usage-based | Custom models, full control |
+| `codex` | Fast | Subscription | Strong code reasoning |
+| `gemini` | Fast | Free tier / subscription | Google ecosystem integration |
+| `claude` | Medium | Subscription | Highest quality responses |
 
 ### API Backend Configuration
 
@@ -109,7 +182,7 @@ export ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
 **Gemini CLI (`gemini`):**
 - Requires Gemini CLI installed: `npm install -g @google/gemini-cli`
 - Uses your existing Google/Gemini subscription (free tier available)
-- Spawns: `gemini -p "prompt"`
+- Spawns: `gemini -y "prompt"`
 
 ## MCP Server Configuration
 
@@ -124,6 +197,9 @@ aleph --enable-actions --tool-docs concise
 
 # Custom timeout and output limits
 aleph --timeout 60 --max-output 100000
+
+# Sub-query backend configuration
+aleph --sub-query-backend claude --sub-query-timeout 90 --sub-query-share-session true
 
 # Custom file size limits (read/write)
 aleph --enable-actions --max-file-size 2000000000 --max-write-bytes 200000000
@@ -249,6 +325,11 @@ ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
 
 # Or use CLI backend (no API key needed)
 # ALEPH_SUB_QUERY_BACKEND=claude
+
+# Optional: strict output validation + retries
+# ALEPH_SUB_QUERY_VALIDATION_REGEX=^[-*] 
+# ALEPH_SUB_QUERY_MAX_RETRIES=2
+# ALEPH_SUB_QUERY_RETRY_PROMPT=Return ONLY bullet lines starting with "- ".
 
 # Resource limits
 ALEPH_MAX_ITERATIONS=100

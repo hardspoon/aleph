@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0
+
+- New: CLI flags for sub-query configuration (`--sub-query-backend`, `--sub-query-timeout`, `--sub-query-share-session`).
+- New: Runtime `configure` MCP tool and REPL helpers (`set_backend`, `get_config`) for sub-query config.
+- New: `ALEPH_SUB_QUERY_TIMEOUT` environment variable to align CLI/API sub-query timeouts.
+- Fixed: Validation retry behavior respects per-call settings over env defaults.
+- Improved: Sub-query error messages now include allowed backend choices.
+
 ## 0.6.0
 
 - Fixed workspace root auto-detection to honor `ALEPH_WORKSPACE_ROOT` and prefer invocation directories (`PWD`/`INIT_CWD`) before falling back to `os.getcwd()`.

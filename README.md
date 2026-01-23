@@ -107,9 +107,10 @@ If this client uses a different skill/command folder, ask me where to place it.
 If tools are namespaced, use mcp__aleph__get_status or mcp__aleph__list_contexts.
 
 4) (Optional) Enable sub_query (recursive sub-agent):
-- CLI backend (no API key): set ALEPH_SUB_QUERY_BACKEND=claude|codex|gemini
-- API backend: set ALEPH_SUB_QUERY_API_KEY + ALEPH_SUB_QUERY_MODEL (+ optional ALEPH_SUB_QUERY_URL)
-If env vars can't be set in the MCP config, add them to your shell profile and restart.
+- Quick: just say "use claude backend" — the LLM will run set_backend("claude")
+- Env var: set ALEPH_SUB_QUERY_BACKEND=claude|codex|gemini|api
+- API backend: set ALEPH_SUB_QUERY_API_KEY + ALEPH_SUB_QUERY_MODEL
+Runtime switching: the LLM can call set_backend() or configure() anytime—no restart needed.
 
 5) Use the skill: /aleph (Claude Code) or $aleph (Codex CLI).
 Gemini CLI: /skills list (use /skills enable aleph if disabled).
@@ -128,6 +129,15 @@ The `/aleph` skill is a prompt that teaches your LLM how to use Aleph effectivel
 - Supports semantic search and fast rg-based codebase search
 - Enables recursive sub-queries for deep analysis
 - Persists sessions for later resumption (memory packs)
+
+### Simplest Use Case
+
+Just point at a file:
+```
+/aleph path/to/huge_log.txt
+```
+
+The LLM will load it into Aleph's external memory and immediately start analyzing using RLM patterns—no extra setup needed.
 
 ### How to invoke
 
@@ -258,7 +268,7 @@ The sandbox includes 100+ helpers that operate on the loaded context:
 | **Line operations** (12) | `head()`, `tail()`, `grep()`, `sort_lines()`, `columns()` |
 | **Text manipulation** (15) | `replace_all()`, `between()`, `truncate()`, `slugify()` |
 | **Validation** (7) | `is_email()`, `is_url()`, `is_json()`, `is_numeric()` |
-| **Core** | `peek()`, `lines()`, `search()`, `chunk()`, `cite()` |
+| **Core** | `peek()`, `lines()`, `search()`, `chunk()`, `cite()`, `sub_query()`, `sub_query_map()`, `sub_query_batch()`, `sub_query_strict()` |
 
 Extractors return `list[dict]` with keys: `value`, `line_num`, `start`, `end`.
 

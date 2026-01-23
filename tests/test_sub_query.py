@@ -30,16 +30,22 @@ class TestSubQueryConfig:
         assert config.api_key_env == DEFAULT_API_KEY_ENV
         assert config.api_base_url_env == DEFAULT_API_BASE_URL_ENV
         assert config.api_model_env == DEFAULT_API_MODEL_ENV
+        assert config.validation_regex is None
+        assert config.max_retries == 0
 
     def test_custom_config(self):
         config = SubQueryConfig(
             backend="api",
             max_context_chars=50_000,
             api_model="gpt-4o",
+            validation_regex=r"^OK:",
+            max_retries=2,
         )
         assert config.backend == "api"
         assert config.max_context_chars == 50_000
         assert config.api_model == "gpt-4o"
+        assert config.validation_regex == r"^OK:"
+        assert config.max_retries == 2
 
 
 class TestDetectBackend:

@@ -26,6 +26,23 @@ finalize(answer="Found X at line Y", context_id="doc")
 
 Note: tool names may appear as `mcp__aleph__load_context` in your MCP client.
 
+## Instant RLM (Load File → Work)
+
+The most common pattern: point at a file, let Aleph load it, immediately apply RLM reasoning.
+
+```
+load_file(path="path/to/large_file.md", context_id="doc")
+search_context(pattern="relevant", context_id="doc")
+exec_python(code="""
+chunks = chunk(50000)
+summaries = sub_query_batch("Summarize:", chunks)
+print(summaries)
+""", context_id="doc")
+finalize(answer="...", context_id="doc")
+```
+
+When a user says `/aleph myfile.py` or `$aleph myfile.py`, load it and immediately begin this pattern.
+
 ## Practical Defaults
 
 - Use `output="json"` for structured results and `output="markdown"` for human-readable output.
@@ -87,16 +104,45 @@ peek_context(start=1200, end=1600, unit="chars", context_id="doc")
 
 ## Sub-Query Guidance
 
-Use sub-queries for bounded, single-shot tasks. Provide a specific output format.
+Use sub-queries inside `exec_python` so the recursion is driven by code (symbolic loops),
+not by repeated tool calls. Provide strict output formats when you plan to parse results.
 
 ```
-sub_query(
-    prompt="Extract error codes. Format: CODE: description",
-    context_slice=log_chunk
+exec_python(code=\"\"\"
+chunks = chunk(100000)
+summaries = sub_query_batch(\"Summarize this chunk:\", chunks)
+final = sub_query_strict(
+    f\"Combine summaries into 5 bullets: {summaries}\",
+    validate_regex=r\"^- \",
+    max_retries=2,
 )
+print(final)
+\"\"\", context_id=\"doc\")
 ```
 
 If you need to parse results in `exec_python`, prefer line-based formats like `KEY: value`.
+
+## Sub-Query Backend Configuration
+
+Sub-queries require a backend. Configure once per session:
+
+**Quick switch (REPL helper inside exec_python):**
+```
+exec_python(code="set_backend('claude')")  # or 'codex', 'gemini', 'api'
+exec_python(code="print(get_config())")    # verify current settings
+```
+
+**MCP tool (direct call):**
+```
+configure(sub_query_backend="claude")
+configure(sub_query_timeout=90, sub_query_share_session=True)
+```
+
+**Backend priority (auto mode):** api → codex → gemini → claude
+
+**Per-call overrides:** `validate_regex` and `max_retries` in `sub_query_strict()` override env defaults.
+
+When a user says "use claude backend" or "switch to gemini", call `set_backend()` or `configure()`.
 
 ## Tool Reference
 
@@ -171,6 +217,9 @@ If you need to parse results in `exec_python`, prefer line-based formats like `K
 - `extract_routes(lang="auto")` for route extraction
 - `cite(snippet, line_range, note)` for evidence
 - `sub_query(prompt, context_slice)` for recursion
+- `sub_query_map(prompts, context_slices=None, limit=None)` for batch sub-queries
+- `sub_query_batch(prompt, context_slices, limit=None)` for one prompt over many slices
+- `sub_query_strict(prompt, context_slice=None, validate_regex=None, max_retries=0)` for strict output validation
 
 **100+ built-in helpers** including:
 - Extractors: `extract_emails()`, `extract_urls()`, `extract_dates()`, `extract_ips()`, `extract_functions()`

@@ -197,6 +197,27 @@ class TestSandboxExecution:
         result = repl.execute("is_import_allowed('json')")
         assert result.return_value is True
 
+    def test_sub_query_batch_helpers(self, repl: REPLEnvironment) -> None:
+        def fake_sub_query(prompt: str, context_slice: str | None = None) -> str:
+            return f"{prompt}|{context_slice}"
+
+        repl.inject_sub_query(fake_sub_query)
+        result = repl.execute("sub_query_batch('Do', ['a', 'b'])")
+        assert result.return_value == ["Do|a", "Do|b"]
+
+        result = repl.execute("sub_query_map(['P1', 'P2'], ['x', 'y'])")
+        assert result.return_value == ["P1|x", "P2|y"]
+
+    def test_sub_query_strict(self, repl: REPLEnvironment) -> None:
+        responses = iter(["BAD", "OK: good"])
+
+        def fake_sub_query(prompt: str, context_slice: str | None = None) -> str:
+            return next(responses)
+
+        repl.inject_sub_query(fake_sub_query)
+        result = repl.execute("sub_query_strict('ignored', validate_regex=r'^OK:', max_retries=1)")
+        assert result.return_value == "OK: good"
+
     def test_code_execution_disabled(self) -> None:
         config = SandboxConfig(enable_code_execution=False)
         repl = REPLEnvironment(context="test", config=config)

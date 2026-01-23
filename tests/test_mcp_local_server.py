@@ -27,6 +27,7 @@ from unittest.mock import AsyncMock, patch
 from aleph.mcp.local_server import AlephMCPServerLocal, _detect_format, _analyze_text_context
 from aleph.repl.sandbox import SandboxConfig
 from aleph.types import ContentFormat
+from aleph.sub_query import SubQueryConfig
 
 
 # ---------------------------------------------------------------------------
@@ -1084,3 +1085,39 @@ class TestConvergenceMetrics:
                                   context_id="test")
         assert "Latest confidence" in result
         assert "50" in result  # Could be "50%" or "50.0%"
+
+
+@pytest.mark.asyncio
+async def test_sub_query_validation_retry():
+    server = AlephMCPServerLocal(sub_query_config=SubQueryConfig(validation_regex=r"^OK:", max_retries=1))
+    with patch("aleph.mcp.local_server.run_cli_sub_query", new=AsyncMock()) as mock_run:
+        mock_run.side_effect = [
+            (True, "BAD OUTPUT"),
+            (True, "OK: good"),
+        ]
+        success, output, truncated, backend = await server._run_sub_query(
+            prompt="Return OK: ...",
+            context_slice="ctx",
+            context_id="default",
+            backend="codex",
+        )
+    assert success is True
+    assert output == "OK: good"
+    assert truncated is False
+    assert backend == "codex"
+    assert mock_run.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_sub_query_validation_failure():
+    server = AlephMCPServerLocal(sub_query_config=SubQueryConfig(validation_regex=r"^OK:", max_retries=0))
+    with patch("aleph.mcp.local_server.run_cli_sub_query", new=AsyncMock()) as mock_run:
+        mock_run.return_value = (True, "NOPE")
+        success, output, _, _ = await server._run_sub_query(
+            prompt="Return OK: ...",
+            context_slice="ctx",
+            context_id="default",
+            backend="codex",
+        )
+    assert success is False
+    assert "validation regex" in output

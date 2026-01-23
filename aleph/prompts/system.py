@@ -28,6 +28,9 @@ AVAILABLE FUNCTIONS (in the REPL):
 - `chunk(chunk_size, overlap=0)` - Split the context into character chunks
 - `semantic_search(query, chunk_size=1000, overlap=100, top_k=5)` - Meaning-based search
 - `sub_query(prompt, context_slice=None)` - Ask a sub-question to another LLM (cheaper model)
+- `sub_query_map(prompts, context_slices=None, limit=None)` - Run multiple sub-queries in sequence
+- `sub_query_batch(prompt, context_slices, limit=None)` - Run one prompt across many slices
+- `sub_query_strict(prompt, context_slice=None, validate_regex=None, max_retries=0)` - Validate output format and retry
 - `sub_aleph(query, context=None)` - Run a recursive Aleph call (higher-level recursion)
 
 WORKFLOW:
