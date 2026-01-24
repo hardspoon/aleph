@@ -18,10 +18,21 @@ This guide covers all configuration options for Aleph, including environment var
 | `ALEPH_SUB_QUERY_HTTP_PATH` | Path for shared MCP session | `/mcp` |
 | `ALEPH_SUB_QUERY_MCP_SERVER_NAME` | Server name exposed to sub-agents | `aleph_shared` |
 | `ALEPH_MAX_ITERATIONS` | Maximum iterations per session | `100` |
+| `ALEPH_MAX_DEPTH` | Maximum recursion depth for Aleph/sub_aleph | `2` |
 
 ## Sub-Query Configuration
 
 The `sub_query` tool spawns independent sub-agents for recursive reasoning. It can use an API backend (OpenAI-compatible) or a local CLI backend (Claude, Codex, Gemini).
+
+## Sub-Aleph (Nested Recursion)
+
+The `sub_aleph` tool runs a full Aleph loop inside another Aleph run. Control recursion depth with:
+
+- `ALEPH_MAX_DEPTH` (default `2`) for how many nested levels are allowed
+  - Example: set `ALEPH_MAX_DEPTH=3` to allow one extra nested layer
+
+`sub_aleph` uses the standard Aleph provider/model settings:
+`ALEPH_PROVIDER`, `ALEPH_MODEL`, `ALEPH_SUB_MODEL`, `ALEPH_API_KEY`.
 
 ### Environment Variables
 
@@ -305,7 +316,7 @@ from aleph.types import Budget
 budget = Budget(
     max_tokens=100_000,        # Total token limit
     max_iterations=100,        # Iteration limit
-    max_depth=5,               # Sub-query recursion depth
+    max_depth=5,               # Recursive depth (sub_aleph/sub_query)
     max_wall_time_seconds=300, # Wall clock timeout
     max_sub_queries=50,        # Sub-query count limit
 )

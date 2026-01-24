@@ -261,6 +261,7 @@ exec_python(code="print(extract_classes())", context_id="repo_hits")
 - `tasks` — lightweight task tracking per context
 - `get_status` — session state
 - `sub_query` — spawn recursive sub-agents (CLI or API backend)
+- `sub_aleph` — nested Aleph recursion (RLM -> RLM)
 
 <details>
 <summary><strong>exec_python helpers</strong></summary>
@@ -274,7 +275,7 @@ The sandbox includes 100+ helpers that operate on the loaded context:
 | **Line operations** (12) | `head()`, `tail()`, `grep()`, `sort_lines()`, `columns()` |
 | **Text manipulation** (15) | `replace_all()`, `between()`, `truncate()`, `slugify()` |
 | **Validation** (7) | `is_email()`, `is_url()`, `is_json()`, `is_numeric()` |
-| **Core** | `peek()`, `lines()`, `search()`, `chunk()`, `cite()`, `sub_query()`, `sub_query_map()`, `sub_query_batch()`, `sub_query_strict()` |
+| **Core** | `peek()`, `lines()`, `search()`, `chunk()`, `cite()`, `sub_query()`, `sub_aleph()`, `sub_query_map()`, `sub_query_batch()`, `sub_query_strict()` |
 
 Extractors return `list[dict]` with keys: `value`, `line_num`, `start`, `end`.
 

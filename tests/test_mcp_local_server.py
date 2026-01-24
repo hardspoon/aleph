@@ -26,7 +26,7 @@ from unittest.mock import AsyncMock, patch
 
 from aleph.mcp.local_server import AlephMCPServerLocal, _detect_format, _analyze_text_context
 from aleph.repl.sandbox import SandboxConfig
-from aleph.types import ContentFormat
+from aleph.types import AlephResponse, ContentFormat
 from aleph.sub_query import SubQueryConfig
 
 
@@ -1121,3 +1121,29 @@ async def test_sub_query_validation_failure():
         )
     assert success is False
     assert "validation regex" in output
+
+
+@pytest.mark.asyncio
+async def test_run_sub_aleph_uses_session_context(loaded_server):
+    response = AlephResponse(
+        answer="Line 1: Hello World",
+        success=True,
+        total_iterations=2,
+        max_depth_reached=1,
+        total_tokens=10,
+        total_cost_usd=0.01,
+        wall_time_seconds=0.1,
+        trajectory=[],
+    )
+    with patch("aleph.mcp.local_server.Aleph.complete", new=AsyncMock(return_value=response)) as mock_complete:
+        result, meta = await loaded_server._run_sub_aleph(
+            query="What is line 1?",
+            context_slice=None,
+            context_id="test",
+            max_depth=3,
+        )
+    assert result.success is True
+    assert meta["budget"].max_depth == 3
+    assert mock_complete.call_args.kwargs["context"].startswith("Line 1")
+    session = loaded_server._sessions["test"]
+    assert session.evidence[-1].source == "sub_aleph"

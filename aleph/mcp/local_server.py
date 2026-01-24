@@ -10,6 +10,7 @@ Tools:
 - exec_python: Execute Python code in sandbox
 - get_variable: Retrieve variables from REPL
 - sub_query: RLM-style recursive sub-agent queries (CLI or API backend)
+- sub_aleph: RLM recursion via nested Aleph calls
 - think: Structure a reasoning sub-step (returns prompt for YOU to reason about)
 - tasks: Lightweight task tracking per context
 - get_status: Show current session state
@@ -52,8 +53,11 @@ from typing import Any, Iterable, Literal, cast
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 
+from ..config import AlephConfig
+from ..core import Aleph
+from ..providers.registry import get_provider
 from ..repl.sandbox import REPLEnvironment, SandboxConfig
-from ..types import ContentFormat, ContextMetadata
+from ..types import AlephResponse, Budget, ContentFormat, ContextMetadata
 from ..sub_query import SubQueryConfig, detect_backend, has_api_credentials
 from ..sub_query.cli_backend import run_cli_sub_query, CLI_BACKENDS
 from ..sub_query.api_backend import run_api_sub_query
@@ -110,7 +114,7 @@ DEFAULT_REMOTE_TOOL_TIMEOUT_SECONDS = _get_env_float(
 @dataclass
 class _Evidence:
     """Provenance tracking for reasoning conclusions."""
-    source: Literal["search", "peek", "exec", "manual", "action", "sub_query"]
+    source: Literal["search", "peek", "exec", "manual", "action", "sub_query", "sub_aleph"]
     line_range: tuple[int, int] | None
     pattern: str | None
     snippet: str
@@ -475,7 +479,7 @@ def _session_from_payload(
             if not isinstance(ev, dict):
                 continue
             source = ev.get("source")
-            if source not in {"search", "peek", "exec", "manual", "action", "sub_query"}:
+            if source not in {"search", "peek", "exec", "manual", "action", "sub_query", "sub_aleph"}:
                 continue
             line_range = ev.get("line_range")
             if isinstance(line_range, list) and len(line_range) == 2:
@@ -1014,6 +1018,108 @@ class AlephMCPServerLocal:
 
         return success, output, truncated, resolved_backend
 
+    async def _run_sub_aleph(
+        self,
+        *,
+        query: str,
+        context_slice: str | None,
+        context_id: str,
+        root_model: str | None = None,
+        sub_model: str | None = None,
+        max_depth: int | None = None,
+        max_iterations: int | None = None,
+        max_tokens: int | None = None,
+        max_sub_queries: int | None = None,
+        max_wall_time_seconds: float | None = None,
+        temperature: float | None = None,
+    ) -> tuple[AlephResponse, dict[str, object]]:
+        session = self._sessions.get(context_id)
+        if session:
+            session.iterations += 1
+
+        if context_slice is None and session:
+            ctx_val = session.repl.get_variable("ctx")
+            if ctx_val is not None:
+                context_slice = _coerce_context_to_text(ctx_val)
+
+        cfg = AlephConfig.from_env()
+        budget = cfg.to_budget()
+        if max_tokens is not None:
+            budget.max_tokens = max_tokens
+        if max_iterations is not None:
+            budget.max_iterations = max_iterations
+        if max_depth is not None:
+            budget.max_depth = max_depth
+        if max_wall_time_seconds is not None:
+            budget.max_wall_time_seconds = max_wall_time_seconds
+        if max_sub_queries is not None:
+            budget.max_sub_queries = max_sub_queries
+
+        resolved_root = root_model or cfg.root_model
+        resolved_sub = sub_model or cfg.sub_model or resolved_root
+
+        temp_val = 0.0
+        if temperature is not None:
+            try:
+                temp_val = float(temperature)
+            except (TypeError, ValueError):
+                temp_val = 0.0
+
+        try:
+            provider = get_provider(cfg.provider, api_key=cfg.api_key)
+            runner = Aleph(
+                provider=provider,
+                root_model=resolved_root,
+                sub_model=resolved_sub,
+                budget=budget,
+                sandbox_config=self.sandbox_config,
+                system_prompt=cfg.system_prompt,
+                enable_caching=cfg.enable_caching,
+                log_trajectory=cfg.log_trajectory,
+            )
+            response = await runner.complete(
+                query=query,
+                context=context_slice or "",
+                root_model=resolved_root,
+                sub_model=resolved_sub,
+                budget=budget,
+                temperature=temp_val,
+            )
+        except Exception as e:
+            response = AlephResponse(
+                answer="",
+                success=False,
+                total_iterations=0,
+                max_depth_reached=0,
+                total_tokens=0,
+                total_cost_usd=0.0,
+                wall_time_seconds=0.0,
+                trajectory=[],
+                error=str(e),
+                error_type="provider_error",
+            )
+
+        if session:
+            note = f"models={resolved_root}/{resolved_sub}"
+            if budget.max_depth is not None:
+                note = f"{note} max_depth={budget.max_depth}"
+            session.evidence.append(_Evidence(
+                source="sub_aleph",
+                line_range=None,
+                pattern=None,
+                snippet=response.answer[:200] if response.success else f"[ERROR] {str(response.error)[:150]}",
+                note=note,
+            ))
+            session.information_gain.append(1 if response.success else 0)
+
+        meta: dict[str, object] = {
+            "root_model": resolved_root,
+            "sub_model": resolved_sub,
+            "budget": budget,
+            "temperature": temp_val,
+        }
+        return response, meta
+
     def _get_sub_query_config_snapshot(self) -> dict[str, Any]:
         backend_env = os.environ.get("ALEPH_SUB_QUERY_BACKEND", "").strip().lower() or "auto"
         return {
@@ -1089,6 +1195,17 @@ class AlephMCPServerLocal:
 
         session.repl.inject_sub_query(sub_query)
 
+    def _inject_repl_sub_aleph(self, session: _Session, context_id: str) -> None:
+        async def sub_aleph(query: str, context: str | None = None) -> AlephResponse:
+            response, _meta = await self._run_sub_aleph(
+                query=query,
+                context_slice=context,
+                context_id=context_id,
+            )
+            return response
+
+        session.repl.inject_sub_aleph(sub_aleph)
+
     def _configure_session(
         self,
         session: _Session,
@@ -1098,6 +1215,7 @@ class AlephMCPServerLocal:
         if loop is not None:
             session.repl.set_loop(loop)
         self._inject_repl_sub_query(session, context_id)
+        self._inject_repl_sub_aleph(session, context_id)
         self._inject_repl_config_helpers(session)
 
     async def _ensure_remote_server(self, server_id: str) -> tuple[bool, str | _RemoteServerHandle]:
@@ -2535,6 +2653,7 @@ class AlephMCPServerLocal:
             - embed_text(text, dim=256): Lightweight embedding vector
             - cite(snippet, line_range=None, note=None): Tag evidence for provenance
             - sub_query(prompt, context_slice=None): Spawn a recursive sub-agent (raw output)
+            - sub_aleph(query, context=None): Run a recursive Aleph call (returns AlephResponse)
             - sub_query_map(prompts, context_slices=None, limit=None): Batch sub-queries
             - sub_query_batch(prompt, context_slices, limit=None): One prompt over many slices
             - sub_query_strict(prompt, context_slice=None, validate_regex=None, max_retries=0): Validate output format
@@ -3135,6 +3254,98 @@ class AlephMCPServerLocal:
                 parts.append(f"*Note: Context was truncated to {self.sub_query_config.max_context_chars:,} chars*")
             parts.extend(["", "---", "", output])
 
+            return "\n".join(parts)
+
+        # =====================================================================
+        # Sub-Aleph tool (nested RLM recursion)
+        # =====================================================================
+
+        @_tool()
+        async def sub_aleph(
+            query: str,
+            context_slice: str | None = None,
+            context_id: str = "default",
+            root_model: str | None = None,
+            sub_model: str | None = None,
+            max_depth: int | None = None,
+            max_iterations: int | None = None,
+            max_tokens: int | None = None,
+            max_sub_queries: int | None = None,
+            max_wall_time_seconds: float | None = None,
+            temperature: float | None = None,
+            format: Literal["markdown", "raw"] = "markdown",
+        ) -> str:
+            """Run a nested Aleph call (RLM recursion).
+
+            Use this when you want the sub-agent to have full Aleph capabilities
+            (exec_python, sub_query, and deeper sub_aleph) instead of a single
+            LLM response.
+
+            Args:
+                query: The question/task for the nested Aleph run
+                context_slice: Optional context to include (defaults to loaded context)
+                context_id: Session to source context from (if context_slice is None)
+                root_model: Override the root model for this call
+                sub_model: Override the sub-model for recursive calls
+                max_depth: Override max recursion depth
+                max_iterations: Override max iterations
+                max_tokens: Override max token budget
+                max_sub_queries: Override max sub-query count
+                max_wall_time_seconds: Override wall-time budget
+                temperature: Override model temperature
+                format: "markdown" or "raw" output
+
+            Returns:
+                Nested Aleph response (answer or formatted metadata + answer)
+            """
+            response, meta = await self._run_sub_aleph(
+                query=query,
+                context_slice=context_slice,
+                context_id=context_id,
+                root_model=root_model,
+                sub_model=sub_model,
+                max_depth=max_depth,
+                max_iterations=max_iterations,
+                max_tokens=max_tokens,
+                max_sub_queries=max_sub_queries,
+                max_wall_time_seconds=max_wall_time_seconds,
+                temperature=temperature,
+            )
+
+            if not response.success:
+                error_text = response.error or "Unknown error"
+                if format == "raw":
+                    return f"[ERROR: sub_aleph failed: {error_text}]"
+                return (
+                    "## Sub-Aleph Error\n\n"
+                    f"**Error Type:** `{response.error_type or 'unknown'}`\n\n"
+                    f"{error_text}"
+                )
+
+            if format == "raw":
+                return response.answer
+
+            budget = cast(Budget, meta["budget"])
+            parts = [
+                "## Sub-Aleph Result",
+                "",
+                f"**Models:** root=`{meta['root_model']}` sub=`{meta['sub_model']}`",
+                f"**Depth reached:** {response.max_depth_reached}",
+                f"**Iterations:** {response.total_iterations}",
+            ]
+            if budget.max_depth is not None:
+                parts.append(f"**Max depth:** {budget.max_depth}")
+            if budget.max_sub_queries is not None:
+                parts.append(f"**Max sub-queries:** {budget.max_sub_queries}")
+            parts.extend([
+                f"**Tokens:** {response.total_tokens}",
+                f"**Cost:** ${response.total_cost_usd:.4f}",
+                f"**Wall time:** {response.wall_time_seconds:.2f}s",
+                "",
+                "---",
+                "",
+                response.answer,
+            ])
             return "\n".join(parts)
 
         @_tool()

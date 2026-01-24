@@ -266,6 +266,7 @@ When a user says "use claude backend" or "switch to gemini", call `set_backend()
 | `finalize` | Complete with answer |
 | `tasks` | Track tasks attached to a context |
 | `sub_query` | Spawn a sub-agent for a chunk |
+| `sub_aleph` | Run a nested Aleph call |
 
 ### Action Tools (requires `--enable-actions`)
 
@@ -307,6 +308,7 @@ When a user says "use claude backend" or "switch to gemini", call `set_backend()
 - `extract_routes(lang="auto")` for route extraction
 - `cite(snippet, line_range, note)` for evidence
 - `sub_query(prompt, context_slice)` for recursion
+- `sub_aleph(query, context=None)` for nested recursion
 - `sub_query_map(prompts, context_slices=None, limit=None)` for batch sub-queries
 - `sub_query_batch(prompt, context_slices, limit=None)` for one prompt over many slices
 - `sub_query_strict(prompt, context_slice=None, validate_regex=None, max_retries=0)` for strict output validation
