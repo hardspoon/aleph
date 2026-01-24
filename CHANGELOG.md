@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.2
+
+- New: `sub_aleph` nested recursion tool for RLM-style recursive reasoning with depth control.
+- New: MCP and REPL exposure for `sub_aleph` with configurable `max_depth`, `max_iterations`, and `max_sub_queries`.
+- New: `ALEPH_MAX_DEPTH` environment variable for limiting recursion depth.
+- New: Double recursion test (`tests/test_double_recursion.py`) for deterministic verification.
+- Updated docs for `sub_aleph` usage patterns and depth configuration.
+
 ## 0.7.1
 
 - Enhanced system prompt with RLM paper examples (arXiv:2512.24601 Appendix D patterns).
