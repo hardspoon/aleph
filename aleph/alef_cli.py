@@ -144,6 +144,11 @@ def _apply_overrides(config: AlephConfig, args: argparse.Namespace) -> None:
         config.enable_caching = False
     if args.no_trajectory:
         config.log_trajectory = False
+    # Swarm mode overrides
+    if getattr(args, "swarm_mode", False):
+        config.swarm_mode = True
+    if getattr(args, "swarm_name", None):
+        config.swarm_name = args.swarm_name
 
 
 def _response_payload(
@@ -267,6 +272,19 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
         "--include-trajectory",
         action="store_true",
         help="Include full trajectory in JSON output.",
+    )
+    # Swarm mode options
+    parser.add_argument(
+        "--swarm-mode",
+        "-S",
+        action="store_true",
+        help="Enable swarm coordination features.",
+    )
+    parser.add_argument(
+        "--swarm-name",
+        type=str,
+        default=None,
+        help="Swarm identifier for agent coordination.",
     )
 
 

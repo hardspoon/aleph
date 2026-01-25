@@ -303,6 +303,8 @@ When a user says "use claude backend" or "switch to gemini", call `set_backend()
 
 **Core:**
 - `ctx`, `peek(start, end)`, `lines(start, end)`, `search(pattern)`, `chunk(size)`
+- `ctx_append(text)` - append text to context (persists for subsequent operations)
+- `ctx_set(text)` - replace entire context with new text
 - `semantic_search(query, ...)` for meaning-based search
 - `embed_text(text, dim)` for lightweight embeddings
 - `extract_routes(lang="auto")` for route extraction

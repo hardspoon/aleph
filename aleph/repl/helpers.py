@@ -1178,3 +1178,232 @@ STANDALONE_HELPER_NAMES: tuple[str, ...] = (
 )
 
 LINE_NUMBER_HELPERS: set[str] = {"search"}
+
+
+# =============================================================================
+# Coherence Capacity (CoCap) Helpers
+# =============================================================================
+# These helpers integrate the Coherence Capacity Theorem into the REPL,
+# allowing the LLM to monitor and manage memory capacity dynamically.
+
+from typing import Any
+
+
+def cocap_status(ctx: object, slot_count: int = 16, warning_threshold: float = 0.75) -> dict[str, Any]:
+    """Check coherence capacity status for current context.
+    
+    Returns a dictionary with:
+    - phase: "healthy", "near", "critical", or "overloaded"
+    - H_Z_effective: estimated skeleton entropy in bits
+    - capacity: total capacity in bits
+    - slack: remaining capacity (capacity - H_Z)
+    - utilization_percent: percentage of capacity used
+    - needs_management: whether action is recommended
+    - suggested_actions: list of management suggestions
+    
+    Args:
+        ctx: The context to analyze
+        slot_count: Number of conceptual memory slots (default: 16)
+        warning_threshold: Threshold for warning phase (default: 0.75)
+    
+    Example:
+        >>> status = cocap_status(ctx, slot_count=16)
+        >>> if status["needs_management"]:
+        ...     print("Consider summarizing:", status["suggested_actions"])
+    """
+    from .. import cocap
+    
+    text = _to_text(ctx)
+    return cocap.capacity_status(text, slot_count=slot_count, warning_threshold=warning_threshold).__dict__
+
+
+def cocap_entropy(ctx: object) -> float:
+    """Quick estimate of skeleton entropy H(Z) for current context.
+    
+    Returns the estimated entropy in bits. Higher values indicate more
+    complex/semantic content that must be maintained for coherence.
+    
+    Args:
+        ctx: The context to analyze
+    
+    Example:
+        >>> H_Z = cocap_entropy(ctx)
+        >>> print(f"Skeleton entropy: {H_Z:.2f} bits")
+    """
+    from .. import cocap
+    
+    text = _to_text(ctx)
+    return cocap.estimate_entropy(text)
+
+
+def cocap_capacity(slot_count: int = 16, redundancy_factor: float = 0.9) -> float:
+    """Calculate effective capacity C from slot count.
+    
+    For K slots, capacity is approximately log2(K) * redundancy_factor.
+    The redundancy factor accounts for error correction overhead.
+    
+    Args:
+        slot_count: Number of available memory slots
+        redundancy_factor: Fraction available after error correction (default: 0.9)
+    
+    Example:
+        >>> cocap_capacity(16)    # 16 slots
+        4.0
+        >>> cocap_capacity(32)    # 32 slots
+        5.0
+    """
+    from .. import cocap
+    
+    return cocap.capacity_from_slots(slot_count, redundancy_factor)
+
+
+def cocap_monitor(slot_count: int = 16, warning_threshold: float = 0.75) -> dict[str, Any]:
+    """Create a coherence capacity monitor and check current status.
+    
+    This is a convenience function that creates a monitor and returns
+    the current status in one call. For repeated checks, consider
+    creating a persistent monitor.
+    
+    Args:
+        slot_count: Number of conceptual memory slots
+        warning_threshold: Threshold for warning phase
+    
+    Returns:
+        Same as cocap_status()
+    
+    Example:
+        >>> monitor = cocap_monitor(slot_count=16, warning_threshold=0.8)
+        >>> print(f"Phase: {monitor['phase']}")
+        >>> print(f"Utilization: {monitor['utilization_percent']:.1f}%")
+    """
+    from .. import cocap
+    
+    monitor = cocap.CoCapMonitor(slot_count=slot_count)
+    config = cocap.CoCapConfig(slot_count=slot_count, warning_threshold=warning_threshold)
+    monitor.config = config
+    
+    text = _to_text(ctx_getter())
+    status = monitor.check_status(text)
+    return status.__dict__
+
+
+def cocap_suggest_actions(ctx: object, slot_count: int = 16) -> list[dict[str, Any]]:
+    """Get memory management suggestions based on current capacity status.
+    
+    Returns a list of suggested actions with:
+    - action_type: "compress", "summarize", "offload", etc.
+    - priority: lower number = higher priority
+    - description: human-readable explanation
+    - estimated_savings: bits of capacity that would be freed
+    - target: what content to target
+    
+    Args:
+        ctx: The context to analyze
+        slot_count: Number of conceptual memory slots
+    
+    Example:
+        >>> actions = cocap_suggest_actions(ctx, slot_count=16)
+        >>> for action in actions:
+        ...     print(f"[Priority {action['priority']}] {action['description']}")
+    """
+    from .. import cocap
+    
+    text = _to_text(ctx)
+    monitor = cocap.CoCapMonitor(slot_count=slot_count)
+    status = monitor.check_status(text)
+    
+    actions = cocap.suggest_management(status, text)
+    return [
+        {
+            'action_type': a.action_type,
+            'priority': a.priority,
+            'description': a.description,
+            'estimated_savings': a.estimated_savings,
+            'target': a.target,
+        }
+        for a in actions
+    ]
+
+
+def cocap_summary(ctx: object, slot_count: int = 16) -> str:
+    """Get a human-readable summary of coherence capacity status.
+    
+    This is useful for quick inspection in the REPL.
+    
+    Args:
+        ctx: The context to analyze
+        slot_count: Number of conceptual memory slots
+    
+    Example:
+        >>> print(cocap_summary(ctx))
+        Coherence Capacity Status:
+        - Phase: healthy
+        - H(Z): 2.34 bits
+        - Capacity: 4.0 bits
+        - Utilization: 58.5%
+        - Status: System has ample capacity for current load.
+    """
+    from .. import cocap
+    
+    text = _to_text(ctx)
+    status = cocap.capacity_status(text, slot_count=slot_count)
+    
+    lines = [
+        "Coherence Capacity Status:",
+        f"- Phase: {status.phase.value}",
+        f"- H(Z): {status.H_Z_effective:.2f} bits",
+        f"- Capacity: {status.capacity:.2f} bits",
+        f"- Slack: {status.slack:.2f} bits",
+        f"- Utilization: {status.utilization_percent:.1f}%",
+        "",
+    ]
+    
+    if status.suggested_actions:
+        lines.append("Suggested Actions:")
+        for action in status.suggested_actions:
+            lines.append(f"  {action}")
+    else:
+        lines.append("Status: No action needed at this time.")
+    
+    return "\n".join(lines)
+
+
+# Context-aware version of cocap functions
+def _cocap_status_wrapped(ctx: object, slot_count: int = 16, warning_threshold: float = 0.75) -> dict[str, Any]:
+    """Context-aware cocap_status for REPL injection."""
+    return cocap_status(ctx, slot_count=slot_count, warning_threshold=warning_threshold)
+
+
+def _cocap_entropy_wrapped(ctx: object) -> float:
+    """Context-aware cocap_entropy for REPL injection."""
+    return cocap_entropy(ctx)
+
+
+def _cocap_suggest_actions_wrapped(ctx: object, slot_count: int = 16) -> list[dict[str, Any]]:
+    """Context-aware cocap_suggest_actions for REPL injection."""
+    return cocap_suggest_actions(ctx, slot_count=slot_count)
+
+
+def _cocap_summary_wrapped(ctx: object, slot_count: int = 16) -> str:
+    """Context-aware cocap_summary for REPL injection."""
+    return cocap_summary(ctx, slot_count=slot_count)
+
+
+# Add cocap functions to context-aware helpers
+COCAP_CONTEXT_HELPER_NAMES = (
+    "cocap_status",
+    "cocap_entropy",
+    "cocap_suggest_actions",
+    "cocap_summary",
+)
+
+# Add to the main context helper names
+CONTEXT_HELPER_NAMES = CONTEXT_HELPER_NAMES + COCAP_CONTEXT_HELPER_NAMES
+
+# Standalone cocap functions (don't need context)
+COCAP_STANDALONE_HELPER_NAMES = (
+    "cocap_capacity",
+)
+
+# Add to the main standalone helper names  
+STANDALONE_HELPER_NAMES = STANDALONE_HELPER_NAMES + COCAP_STANDALONE_HELPER_NAMES

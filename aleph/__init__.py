@@ -7,6 +7,7 @@ Exports:
 - Aleph: main class
 - create_aleph: factory
 - AlephConfig: configuration dataclass
+- cocap: coherence capacity monitoring module
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from .types import (
     Budget,
     BudgetStatus,
 )
+from . import cocap
 
 __all__ = [
     "Aleph",
@@ -44,6 +46,7 @@ __all__ = [
     "AlephResponse",
     "Budget",
     "BudgetStatus",
+    "cocap",
 ]
 
-__version__ = "0.7.2"
+__version__ = "0.7.5"

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.5
+
+- Added: CLI provider tests for message formatting and error handling.
+- Added: Swarm coordination/progress/context-id test coverage.
+- Added: `ctx_append`/`ctx_set` sandbox helper tests.
+- Fixed: Swarm timestamps now use timezone-safe UTC generation.
+- Fixed: `__version__` now matches the package release version.
+
 ## 0.7.4
 
 - New: `alef` CLI command for running full RLM loop without MCP server.

@@ -13,6 +13,26 @@ from .workspace import DEFAULT_LINE_NUMBER_BASE, LineNumberBase, _validate_line_
 
 MEMORY_PACK_RELATIVE_PATH = ".aleph/memory_pack.json"
 
+# Thread safety: per-context locks for concurrent access
+# Using a dict allows parallelism across different contexts while protecting each context
+_context_locks: dict[str, asyncio.Lock] = {}
+
+
+def get_context_lock(context_id: str) -> asyncio.Lock:
+    """Get or create an asyncio.Lock for a specific context_id.
+
+    This enables thread-safe access to session state while allowing
+    parallel operations on different contexts.
+    """
+    if context_id not in _context_locks:
+        _context_locks[context_id] = asyncio.Lock()
+    return _context_locks[context_id]
+
+
+def cleanup_context_lock(context_id: str) -> None:
+    """Remove the lock for a context when it's deleted."""
+    _context_locks.pop(context_id, None)
+
 
 def _coerce_context_to_text(value: Any) -> str:
     if isinstance(value, str):
@@ -71,6 +91,48 @@ class _Session:
     # Lightweight task tracking
     tasks: list[dict[str, Any]] = field(default_factory=list)
     task_counter: int = 0
+    # Evidence pruning: limit growth with FIFO eviction
+    max_evidence: int = 100
+
+    def add_evidence(self, ev: _Evidence, preserve_snippets: set[str] | None = None) -> None:
+        """Add evidence with automatic FIFO pruning when limit exceeded.
+
+        Args:
+            ev: The evidence to add
+            preserve_snippets: Set of snippet hashes to preserve (e.g., referenced in final answer)
+        """
+        self.evidence.append(ev)
+        self._prune_evidence(preserve_snippets)
+
+    def _prune_evidence(self, preserve_snippets: set[str] | None = None) -> None:
+        """Prune oldest evidence when limit exceeded, preserving important entries.
+
+        Uses FIFO eviction but skips evidence whose snippet is in preserve_snippets.
+        """
+        if len(self.evidence) <= self.max_evidence:
+            return
+
+        preserve_snippets = preserve_snippets or set()
+        # Separate protected and unprotected evidence
+        protected: list[_Evidence] = []
+        unprotected: list[_Evidence] = []
+
+        for ev in self.evidence:
+            if ev.snippet in preserve_snippets:
+                protected.append(ev)
+            else:
+                unprotected.append(ev)
+
+        # Calculate how many unprotected items to keep
+        slots_for_unprotected = max(0, self.max_evidence - len(protected))
+        # Keep newest unprotected items (FIFO: remove oldest first)
+        kept_unprotected = unprotected[-slots_for_unprotected:] if slots_for_unprotected > 0 else []
+
+        # Rebuild evidence list maintaining chronological order
+        self.evidence = sorted(
+            protected + kept_unprotected,
+            key=lambda e: e.timestamp
+        )
 
 
 def _session_to_payload(session_id: str, session: _Session) -> dict[str, Any]:

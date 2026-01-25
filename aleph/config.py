@@ -44,6 +44,7 @@ class AlephConfig:
     allowed_imports: list[str] = field(default_factory=lambda: list(DEFAULT_ALLOWED_IMPORTS))
     sandbox_timeout_seconds: float = 60.0
     max_output_chars: int = 50_000
+    unrestricted_sandbox: bool = False  # Bypass all sandbox restrictions
 
     # REPL
     context_var_name: str = "ctx"
@@ -58,6 +59,19 @@ class AlephConfig:
 
     # Custom prompt
     system_prompt: str | None = None
+
+    # Swarm mode settings
+    # Enable with ALEPH_SWARM_MODE=true or --swarm-mode flag
+    swarm_mode: bool = False
+    # Enable session sharing between sub-agents in swarm mode
+    # ALEPH_SWARM_SESSION_SHARING=true
+    swarm_session_sharing: bool = True
+    # Maximum concurrent agents in swarm
+    swarm_max_agents: int = 10
+    # Context ID prefix for swarm sessions (e.g., "swarm" -> "swarm-agent-1")
+    swarm_context_prefix: str = "swarm"
+    # Swarm identifier for coordination (ALEPH_SWARM_NAME)
+    swarm_name: str | None = None
 
     @classmethod
     def from_file(cls, path: str | Path) -> "AlephConfig":
@@ -103,6 +117,13 @@ class AlephConfig:
             max_sub_queries=int(os.getenv("ALEPH_MAX_SUB_QUERIES", "100")),
             enable_caching=os.getenv("ALEPH_ENABLE_CACHING", "true").lower() in {"1", "true", "yes"},
             log_trajectory=os.getenv("ALEPH_LOG_TRAJECTORY", "true").lower() in {"1", "true", "yes"},
+            # Swarm mode env vars
+            swarm_mode=os.getenv("ALEPH_SWARM_MODE", "false").lower() in {"1", "true", "yes"},
+            swarm_session_sharing=os.getenv("ALEPH_SWARM_SESSION_SHARING", "true").lower() in {"1", "true", "yes"},
+            swarm_max_agents=int(os.getenv("ALEPH_SWARM_MAX_AGENTS", "10")),
+            swarm_context_prefix=os.getenv("ALEPH_SWARM_CONTEXT_PREFIX", "swarm"),
+            swarm_name=os.getenv("ALEPH_SWARM_NAME"),
+            unrestricted_sandbox=os.getenv("ALEPH_UNRESTRICTED_SANDBOX", "false").lower() in {"1", "true", "yes"},
         )
 
     def to_budget(self) -> Budget:
@@ -122,6 +143,7 @@ class AlephConfig:
             max_output_chars=self.max_output_chars,
             timeout_seconds=self.sandbox_timeout_seconds,
             enable_code_execution=self.enable_code_execution,
+            unrestricted=self.unrestricted_sandbox,
         )
 
 

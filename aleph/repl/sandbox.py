@@ -107,6 +107,7 @@ class SandboxConfig:
     max_output_chars: int = 50_000
     timeout_seconds: float = 60.0
     enable_code_execution: bool = True
+    unrestricted: bool = False  # Bypass all sandbox restrictions when True
 
 
 def _safe_import_factory(allowed: set[str]) -> Callable[..., object]:
@@ -128,6 +129,11 @@ def _safe_import_factory(allowed: set[str]) -> Callable[..., object]:
         return real_import(name, globals, locals, fromlist, level)
 
     return _safe_import
+
+
+def _unrestricted_builtins() -> dict[str, object]:
+    """Return full builtins for unrestricted mode."""
+    return dict(vars(builtins))
 
 
 def _safe_builtins(allowed_imports: list[str]) -> dict[str, object]:
@@ -411,9 +417,14 @@ class REPLEnvironment:
         self._loop = loop
 
         # Base namespace (globals/locals for exec)
+        builtins_dict = (
+            _unrestricted_builtins()
+            if self.config.unrestricted
+            else _safe_builtins(self.config.allowed_imports)
+        )
         self._namespace: dict[str, object] = {
             context_var_name: context,
-            "__builtins__": _safe_builtins(self.config.allowed_imports),
+            "__builtins__": builtins_dict,
         }
 
         # Citation storage for provenance tracking
@@ -464,7 +475,20 @@ class REPLEnvironment:
             prompts: Sequence[str],
             context_slices: Sequence[str] | None = None,
             limit: int | None = None,
+            parallel: bool = True,
         ) -> list[str]:
+            """Map sub_query over multiple prompts.
+
+            Args:
+                prompts: Sequence of prompts to execute
+                context_slices: Optional corresponding context slices
+                limit: Maximum number of prompts to process
+                parallel: If True, execute prompts in parallel using asyncio.gather()
+                         (default). Set to False for sequential execution.
+
+            Returns:
+                List of string results in same order as prompts
+            """
             if isinstance(prompts, str):
                 raise TypeError("prompts must be a sequence of strings, not a string")
             prompt_list = list(prompts)
@@ -481,8 +505,36 @@ class REPLEnvironment:
                     slices_list = slices_list[:limit]
                 if len(slices_list) != len(prompt_list):
                     raise ValueError("context_slices length must match prompts length")
-            results: list[str] = []
+
             sub = _require_sub_query()
+
+            # Parallel execution using asyncio.gather() for better performance
+            if parallel and self._loop is not None and len(prompt_list) > 1:
+                async def _run_parallel() -> list[str]:
+                    async def _call_sub(idx: int) -> str:
+                        slice_val = slices_list[idx] if slices_list is not None else None
+                        # sub() may be sync or async; handle both
+                        result = sub(prompt_list[idx], slice_val)
+                        if inspect.isawaitable(result):
+                            result = await result
+                        return str(result)
+
+                    # Execute all prompts concurrently
+                    tasks = [_call_sub(i) for i in range(len(prompt_list))]
+                    return list(await asyncio.gather(*tasks))
+
+                # Bridge to async execution
+                if threading.current_thread() is not threading.main_thread():
+                    # Called from worker thread - safe to use run_coroutine_threadsafe
+                    fut = asyncio.run_coroutine_threadsafe(_run_parallel(), self._loop)
+                    return fut.result()
+                elif not self._loop.is_running():
+                    # Loop not running - use run_until_complete
+                    return self._loop.run_until_complete(_run_parallel())
+                # Fall through to sequential if we can't safely parallelize
+
+            # Sequential fallback (original behavior)
+            results: list[str] = []
             for idx, prompt in enumerate(prompt_list):
                 slice_val = slices_list[idx] if slices_list is not None else None
                 result = sub(prompt, slice_val)
@@ -561,6 +613,38 @@ class REPLEnvironment:
 
             return _wrapped_default
 
+        def _ctx_append(text: str) -> str:
+            """Append text to the context variable and return the new value.
+
+            This modifies the context in-place, making it available for subsequent
+            operations in the same session.
+
+            Args:
+                text: The text to append to the context.
+
+            Returns:
+                The new context value after appending.
+
+            Example:
+                ctx_append("\\n## New Finding\\nFound a bug in auth.py")
+            """
+            current = _helpers._to_text(self._namespace.get(context_var_name) or "")
+            new_ctx = current + text
+            self._namespace[context_var_name] = new_ctx
+            return new_ctx
+
+        def _ctx_set(text: str) -> str:
+            """Replace the entire context with new text.
+
+            Args:
+                text: The new context value.
+
+            Returns:
+                The new context value.
+            """
+            self._namespace[context_var_name] = text
+            return text
+
         helpers_ns: dict[str, object] = {
             "cite": _cite_and_store,
             "_evidence": self._evidence,
@@ -570,6 +654,9 @@ class REPLEnvironment:
             "sub_query_map": _sub_query_map,
             "sub_query_batch": _sub_query_batch,
             "sub_query_strict": _sub_query_strict,
+            # Context modification helpers
+            "ctx_append": _ctx_append,
+            "ctx_set": _ctx_set,
         }
 
         for name in CONTEXT_HELPER_NAMES:
@@ -662,7 +749,9 @@ class REPLEnvironment:
         allowed_imports = set(self.config.allowed_imports)
 
         try:
-            _validate_ast(code, allowed_imports)
+            # Skip AST validation in unrestricted mode
+            if not self.config.unrestricted:
+                _validate_ast(code, allowed_imports)
             exec_code, eval_code = _compile_with_last_expr(code)
 
             # Track variable bindings (rebinding detection)

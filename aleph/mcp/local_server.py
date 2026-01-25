@@ -4202,6 +4202,43 @@ def main() -> None:
         help="Share MCP session with CLI sub-agents (true/false).",
     )
 
+    # Swarm mode options
+    parser.add_argument(
+        "--swarm-mode",
+        "-S",
+        action="store_true",
+        help="Enable swarm coordination features for multi-agent workflows.",
+    )
+    parser.add_argument(
+        "--swarm-name",
+        type=str,
+        default=None,
+        help="Swarm identifier for agent coordination (sets ALEPH_SWARM_NAME).",
+    )
+    parser.add_argument(
+        "--enable-session-sharing",
+        action="store_true",
+        help="Enable sub-agent session sharing in swarm mode (sets ALEPH_SWARM_SESSION_SHARING=true).",
+    )
+    parser.add_argument(
+        "--swarm-max-agents",
+        type=int,
+        default=None,
+        help="Maximum concurrent agents in swarm (default: 10).",
+    )
+    parser.add_argument(
+        "--swarm-context-prefix",
+        type=str,
+        default=None,
+        help="Context ID prefix for swarm sessions (default: 'swarm').",
+    )
+    parser.add_argument(
+        "--unrestricted",
+        "-U",
+        action="store_true",
+        help="Disable sandbox restrictions (allow all imports, builtins, and AST constructs). Use with caution.",
+    )
+
     args = parser.parse_args()
 
     if args.sub_query_backend is not None:
@@ -4213,9 +4250,22 @@ def main() -> None:
             "true" if args.sub_query_share_session else "false"
         )
 
+    # Swarm mode environment variables
+    if args.swarm_mode:
+        os.environ["ALEPH_SWARM_MODE"] = "true"
+    if args.swarm_name is not None:
+        os.environ["ALEPH_SWARM_NAME"] = args.swarm_name
+    if args.enable_session_sharing:
+        os.environ["ALEPH_SWARM_SESSION_SHARING"] = "true"
+    if args.swarm_max_agents is not None:
+        os.environ["ALEPH_SWARM_MAX_AGENTS"] = str(args.swarm_max_agents)
+    if args.swarm_context_prefix is not None:
+        os.environ["ALEPH_SWARM_CONTEXT_PREFIX"] = args.swarm_context_prefix
+
     config = SandboxConfig(
         timeout_seconds=args.timeout,
         max_output_chars=args.max_output,
+        unrestricted=args.unrestricted,
     )
 
     action_cfg = ActionConfig(

@@ -24,8 +24,8 @@ Based on the [Recursive Language Model](https://arxiv.org/abs/2512.24601) (RLM) 
 ## Requirements
 
 - Python 3.10+
-- An MCP-compatible client: [Claude Code](https://claude.ai/code), [Cursor](https://cursor.sh), [VS Code](https://code.visualstudio.com/), [Windsurf](https://codeium.com/windsurf), [Codex CLI](https://github.com/openai/codex), or [Claude Desktop](https://claude.ai/download)
-- **Or** for CLI-only mode: just `claude`, `codex`, or `gemini` CLI installed (no API keys needed)
+- **For MCP mode:** An MCP-compatible client ([Claude Code](https://claude.ai/code), [Cursor](https://cursor.sh), [VS Code](https://code.visualstudio.com/), [Windsurf](https://codeium.com/windsurf), [Codex CLI](https://github.com/openai/codex), or [Claude Desktop](https://claude.ai/download))
+- **For CLI mode:** `claude`, `codex`, or `gemini` CLI installed
 
 ## Quickstart
 
@@ -35,7 +35,29 @@ Based on the [Recursive Language Model](https://arxiv.org/abs/2512.24601) (RLM) 
 pip install "aleph-rlm[mcp]"
 ```
 
-### 2. Configure your MCP client
+This installs three commands:
+
+| Command | Purpose |
+|---------|---------|
+| `aleph` | MCP server — connect from any MCP client |
+| `alef` | Standalone CLI — run RLM loops directly from your terminal |
+| `aleph-rlm` | Setup utility — auto-configure MCP clients |
+
+### 2. Choose your mode
+
+**Option A: MCP Mode** (recommended for AI assistants)
+
+Configure your MCP client to use the `aleph` server, then interact via tool calls.
+
+**Option B: CLI Mode** (standalone terminal use)
+
+Run `alef` directly from the command line — no MCP setup required.
+
+---
+
+## MCP Mode Setup
+
+### Configure your MCP client
 
 **Automatic** (recommended):
 ```bash
@@ -71,7 +93,7 @@ This auto-detects your installed clients and configures them.
 
 See [MCP_SETUP.md](MCP_SETUP.md) for detailed instructions.
 
-### 3. Verify
+### Verify
 
 In your assistant, run:
 ```
@@ -80,9 +102,13 @@ get_status()
 
 If using Claude Code, tools are prefixed: `mcp__aleph__get_status`.
 
-## CLI-Only Mode (`alef`) — No API Keys Required
+---
 
-Run the full RLM reasoning loop directly from your terminal using local CLI tools (`claude`, `codex`, or `gemini`). No API keys or MCP setup needed.
+## CLI Mode (`alef`)
+
+The `alef` command runs the full RLM reasoning loop directly from your terminal. It uses local CLI tools (`claude`, `codex`, or `gemini`) as the LLM backend — no separate Aleph API keys needed, just the CLI tool's own authentication.
+
+**Prerequisites:** Have `claude`, `codex`, or `gemini` CLI installed and authenticated.
 
 ### Basic Usage
 
@@ -140,6 +166,126 @@ The RLM loop will:
 | `ALEPH_SUB_QUERY_BACKEND` | Backend for `sub_query()`: `claude`, `codex`, `gemini`, or `api` |
 | `ALEPH_SUB_QUERY_SHARE_SESSION` | Share MCP session with sub-agents (set to `1`) |
 | `ALEPH_CLI_TIMEOUT` | Timeout for CLI calls (default: 120s) |
+
+---
+
+## Swarm Mode
+
+Aleph enables multi-agent coordination through shared contexts. Multiple agents can read and write to the same context IDs, creating a distributed memory layer for swarm architectures.
+
+### How It Works
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│  Agent A    │     │  Agent B    │     │  Agent C    │
+│  (Explorer) │     │  (Analyst)  │     │  (Writer)   │
+└──────┬──────┘     └──────┬──────┘     └──────┬──────┘
+       │                   │                   │
+       └───────────────────┼───────────────────┘
+                           │
+                    ┌──────▼──────┐
+                    │   Aleph     │
+                    │  Contexts   │
+                    │ (Shared RAM)│
+                    └─────────────┘
+```
+
+Agents coordinate by reading/writing to shared context IDs. No message passing needed for data—agents simply load, search, and write to the same contexts.
+
+### Context Naming Conventions
+
+| Pattern | Purpose | Example |
+|---------|---------|---------|
+| `swarm-{name}-kb` | Shared knowledge base | `swarm-docs-kb` |
+| `task-{id}-spec` | Task requirements | `task-42-spec` |
+| `task-{id}-findings` | Shared discoveries | `task-42-findings` |
+| `{agent}-workspace` | Private agent workspace | `explorer-workspace` |
+
+### Basic Swarm Workflow
+
+**1. Leader creates shared context:**
+```python
+load_context(content="Project: Analyze auth system", context_id="swarm-auth-kb")
+```
+
+**2. Spawn agents with Aleph access:**
+```bash
+# Each agent connects to the same Aleph MCP server
+# They can all access "swarm-auth-kb"
+```
+
+**3. Agents write findings to shared context:**
+```python
+# Agent A finds something
+exec_python(code="""
+finding = "Auth uses JWT with RS256"
+ctx_append(finding)  # Appends to current context
+""", context_id="task-42-findings")
+```
+
+**4. Agents read each other's work:**
+```python
+search_context(pattern="JWT|token", context_id="task-42-findings")
+```
+
+**5. Diff and merge contexts:**
+```python
+diff_contexts(a="agent-a-workspace", b="agent-b-workspace")
+```
+
+### Self-Improvement Loop
+
+Swarms can accumulate learnings across sessions:
+
+```python
+# After completing a task, log what worked
+exec_python(code="""
+learning = '''
+## Pattern: Parallel Code Search
+- Split codebase by directory
+- Each agent searches one area
+- Merge findings to shared context
+- 3x faster than sequential
+'''
+ctx_append(learning)
+""", context_id="swarm-kb")
+
+# Save for next session
+save_session(context_id="swarm-kb", path="swarm_learnings.json")
+```
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `ALEPH_SUB_QUERY_SHARE_SESSION` | Set to `1` to let sub-agents access parent's MCP session |
+| `ALEPH_SUB_QUERY_BACKEND` | Backend for `sub_query()`: `claude`, `codex`, `gemini`, or `api` |
+
+### Key Patterns
+
+**Parallel Exploration:**
+```python
+# Spawn multiple agents, each with a different context_id
+# Agent 1: context_id="explore-frontend"
+# Agent 2: context_id="explore-backend"
+# All write findings to: context_id="task-findings"
+```
+
+**Consensus Building:**
+```python
+# Each agent writes proposal to task-proposals
+# Use diff_contexts to compare
+# Synthesize with sub_aleph
+```
+
+**Knowledge Propagation:**
+```
+Discovery → Private Workspace → Validate → Shared Context → Knowledge Base
+```
+
+See the `/swarm` skill for detailed prompts and examples.
+
+---
 
 ## AI Assistant Setup (MCP + `/aleph` Skill) — Copy/Paste
 
@@ -331,7 +477,7 @@ The sandbox includes 100+ helpers that operate on the loaded context:
 | **Line operations** (12) | `head()`, `tail()`, `grep()`, `sort_lines()`, `columns()` |
 | **Text manipulation** (15) | `replace_all()`, `between()`, `truncate()`, `slugify()` |
 | **Validation** (7) | `is_email()`, `is_url()`, `is_json()`, `is_numeric()` |
-| **Core** | `peek()`, `lines()`, `search()`, `chunk()`, `cite()`, `sub_query()`, `sub_aleph()`, `sub_query_map()`, `sub_query_batch()`, `sub_query_strict()` |
+| **Core** | `peek()`, `lines()`, `search()`, `chunk()`, `cite()`, `sub_query()`, `sub_aleph()`, `sub_query_map()`, `sub_query_batch()`, `sub_query_strict()`, `ctx_append()`, `ctx_set()` |
 
 Extractors return `list[dict]` with keys: `value`, `line_num`, `start`, `end`.
 

@@ -184,6 +184,16 @@ class TestSandboxExecution:
         result = repl.execute("len(ctx)")
         assert result.return_value == len("test context for unit tests")
 
+    def test_ctx_append_updates_context(self, repl: REPLEnvironment) -> None:
+        result = repl.execute("ctx_append(' plus')")
+        assert result.error is None
+        assert repl.get_variable("ctx") == "test context for unit tests plus"
+
+    def test_ctx_set_replaces_context(self, repl: REPLEnvironment) -> None:
+        result = repl.execute("ctx_set('reset')")
+        assert result.error is None
+        assert repl.get_variable("ctx") == "reset"
+
     def test_helper_peek_available(self, repl: REPLEnvironment) -> None:
         result = repl.execute("peek(0, 4)")
         assert result.return_value == "test"
