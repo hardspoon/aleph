@@ -35,6 +35,7 @@ texput.log
 # Aleph local workspace (sessions, per-user)
 .aleph/
 tmp/
+nedw cocomp/
 
 # Deployment / debug logs
 wrangler.toml
