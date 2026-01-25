@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aleph-rlm"
-version = "0.7.5"
+version = "0.7.6"
 description = "MCP server for recursive LLM reasoning—load context, iterate with search/code/think tools, converge on answers"
 readme = "README.md"
 license = { file = "LICENSE" }

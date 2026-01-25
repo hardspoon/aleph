@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.6
+
+- Removed: CoCap module and related REPL helpers.
+
 ## 0.7.5
 
 - Added: CLI provider tests for message formatting and error handling.
