@@ -250,10 +250,10 @@ These parameters apply to `aleph`:
 
 `sub_query` can use an API backend or a local CLI backend. When `ALEPH_SUB_QUERY_BACKEND` is `auto` (default), Aleph chooses the first available backend:
 
-1. **API** - if API credentials are available
-2. **claude CLI** - if installed
-3. **codex CLI** - if installed
-4. **gemini CLI** - if installed
+1. **codex CLI** - if installed
+2. **gemini CLI** - if installed
+3. **claude CLI** - if installed (deprioritized in MCP/sandbox contexts)
+4. **API** - if API credentials are available (fallback)
 
 ### API Configuration
 
@@ -265,12 +265,14 @@ The API backend uses **OpenAI-compatible endpoints only**. Configure with these 
 | `ALEPH_SUB_QUERY_URL` | `OPENAI_BASE_URL` | Base URL (default: `https://api.openai.com/v1`) |
 | `ALEPH_SUB_QUERY_MODEL` | - | Model name (**required**) |
 
+**Precedence:** `ALEPH_SUB_QUERY_URL` overrides `OPENAI_BASE_URL`. If neither is set, Aleph uses `https://api.openai.com/v1`.
+
 ### Quick Setup Examples
 
 **OpenAI:**
 ```bash
 export ALEPH_SUB_QUERY_API_KEY=sk-...
-export ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
+export ALEPH_SUB_QUERY_MODEL=your-model-name
 ```
 
 **Groq (fast inference):**
@@ -281,6 +283,7 @@ export ALEPH_SUB_QUERY_MODEL=llama-3.3-70b-versatile
 ```
 
 **Local LLM (Ollama, LM Studio, etc.):**
+Make sure your local server is running and the model is available before configuring the endpoint.
 ```bash
 export ALEPH_SUB_QUERY_API_KEY=ollama  # Any non-empty value works
 export ALEPH_SUB_QUERY_URL=http://localhost:11434/v1
@@ -295,6 +298,8 @@ export ALEPH_SUB_QUERY_MODEL=llama3.2
 | `ALEPH_SUB_QUERY_API_KEY` | API key (fallback: `OPENAI_API_KEY`) |
 | `ALEPH_SUB_QUERY_URL` | API base URL (fallback: `OPENAI_BASE_URL`) |
 | `ALEPH_SUB_QUERY_MODEL` | Model name (required for API backend) |
+
+Use `ALEPH_SUB_QUERY_BACKEND` when you want to pin a backend or bypass auto-detection; otherwise leave it unset to use the default `auto` selection order above.
 
 > **Note:** Some MCP clients don't reliably pass `env` vars from their config to the server process. If `sub_query` reports "API key not found" despite your client's MCP settings, add the exports to your shell profile:
 > - **macOS/Linux:** `~/.zshrc` or `~/.bashrc`
@@ -313,7 +318,7 @@ The workspace root should be the directory containing:
 
 **Automatic Detection:** If you don't set `--workspace-root`, aleph will:
 1. Use `ALEPH_WORKSPACE_ROOT` if set
-2. Otherwise prefer `PWD`/`INIT_CWD` when present
+2. Otherwise prefer `PWD` (falls back to `INIT_CWD`) when present
 3. Check if `.git` exists in that directory
 4. If not, search parent directories until finding `.git`
 5. Use that directory as the workspace root
@@ -605,6 +610,30 @@ python3 -m aleph.mcp.server --help
 # Restart MCP client (Cursor/VS Code/Claude Desktop)
 ```
 
+### sub_query Timed Out
+
+**Symptom:** `sub_query` calls fail with a timeout error.
+
+**Causes:** Backend latency, large context slices, or low timeout settings.
+
+**Solution:** Increase the sub-query timeout and/or reduce context size.
+
+**Examples:**
+```bash
+# Env var
+export ALEPH_SUB_QUERY_TIMEOUT=120
+
+# CLI flag
+aleph --sub-query-timeout 120
+```
+
+**Runtime (MCP tool):**
+```python
+mcp__aleph__configure(sub_query_timeout=120)
+```
+
+If you're passing very large context slices, consider chunking (e.g., `chunk(100000)` + `sub_query_batch`).
+
 ### sub_query Reports "API Key Not Found"
 
 **Symptom:** `sub_query` tool returns "API key not found" errors despite having credentials configured.
@@ -616,13 +645,13 @@ python3 -m aleph.mcp.server --help
 **macOS/Linux** (add to `~/.zshrc` or `~/.bashrc`):
 ```bash
 export ALEPH_SUB_QUERY_API_KEY=sk-...
-export ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
+export ALEPH_SUB_QUERY_MODEL=your-model-name
 ```
 
 **Windows** (add to System Environment Variables, or PowerShell `$PROFILE`):
 ```powershell
 $env:ALEPH_SUB_QUERY_API_KEY = "sk-..."
-$env:ALEPH_SUB_QUERY_MODEL = "gpt-5.2-codex"
+$env:ALEPH_SUB_QUERY_MODEL = "your-model-name"
 ```
 
 Then restart your terminal/MCP client.

@@ -22,7 +22,7 @@ This guide covers all configuration options for Aleph, including environment var
 
 ## Sub-Query Configuration
 
-The `sub_query` tool spawns independent sub-agents for recursive reasoning. It can use an API backend (OpenAI-compatible) or a local CLI backend (Claude, Codex, Gemini).
+The `sub_query` tool spawns independent sub-agents for recursive reasoning. It can use an API backend (OpenAI-compatible) or a local CLI backend (Claude, Codex, Gemini). Auto mode prioritizes CLI backends, then falls back to API.
 
 ## Sub-Aleph (Nested Recursion)
 
@@ -56,10 +56,10 @@ The `sub_aleph` tool runs a full Aleph loop inside another Aleph run. Control re
 
 When `ALEPH_SUB_QUERY_BACKEND` is not set or set to `auto`:
 
-1. **API** -- if any API credentials are available
-2. **codex CLI** -- if installed (uses OpenAI subscription)
-3. **gemini CLI** -- if installed (uses Google Gemini subscription)
-4. **claude CLI** -- if installed (uses Claude Code subscription)
+1. **codex CLI** -- if installed (uses OpenAI subscription)
+2. **gemini CLI** -- if installed (uses Google Gemini subscription)
+3. **claude CLI** -- if installed (deprioritized in MCP/sandbox contexts)
+4. **API** -- if any API credentials are available (fallback)
 
 ### Force a Specific Backend
 
@@ -137,12 +137,14 @@ The API backend supports any **OpenAI-compatible** endpoint. Configure with thes
 | `ALEPH_SUB_QUERY_URL` | Base URL | `OPENAI_BASE_URL` or `https://api.openai.com/v1` |
 | `ALEPH_SUB_QUERY_MODEL` | Model name | (required) |
 
+**Precedence:** `ALEPH_SUB_QUERY_URL` overrides `OPENAI_BASE_URL`. If neither is set, Aleph uses `https://api.openai.com/v1`.
+
 **Examples:**
 
 ```bash
 # OpenAI
 export ALEPH_SUB_QUERY_API_KEY=sk-...
-export ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
+export ALEPH_SUB_QUERY_MODEL=your-model-name
 
 # Groq (fast inference)
 export ALEPH_SUB_QUERY_API_KEY=gsk_...
@@ -158,6 +160,9 @@ export ALEPH_SUB_QUERY_MODEL=meta-llama/Llama-3-70b-chat-hf
 export ALEPH_SUB_QUERY_API_KEY=...
 export ALEPH_SUB_QUERY_URL=https://api.deepseek.com/v1
 export ALEPH_SUB_QUERY_MODEL=deepseek-chat
+
+# Local endpoints (Ollama/LM Studio)
+# Make sure your local server is running and the model is available.
 
 # Ollama (local)
 export ALEPH_SUB_QUERY_API_KEY=ollama  # any non-empty value
@@ -175,7 +180,7 @@ export ALEPH_SUB_QUERY_MODEL=local-model
 If you already have `OPENAI_API_KEY` and `OPENAI_BASE_URL` set, you only need to set the model:
 
 ```bash
-export ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
+export ALEPH_SUB_QUERY_MODEL=your-model-name
 ```
 
 ### CLI Backend Notes
@@ -230,7 +235,7 @@ aleph --tool-docs full
 
 **Workspace auto-detection:** If `--workspace-root` is not set, Aleph will:
 1. Use `ALEPH_WORKSPACE_ROOT` if provided.
-2. Otherwise prefer `PWD`/`INIT_CWD` when present.
+2. Otherwise prefer `PWD` (falls back to `INIT_CWD`) when present.
 3. Fall back to `os.getcwd()` and walk up to the nearest `.git` root.
 
 ## Power Features (Default When Actions Enabled)
@@ -329,7 +334,7 @@ Create a `.env` file in your project root:
 ```bash
 # Sub-query API configuration (OpenAI-compatible)
 ALEPH_SUB_QUERY_API_KEY=sk-...
-ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
+ALEPH_SUB_QUERY_MODEL=your-model-name
 
 # Optional: custom endpoint
 # ALEPH_SUB_QUERY_URL=https://api.groq.com/openai/v1
@@ -368,10 +373,18 @@ Load with your shell or tool of choice (e.g., `source .env`, `dotenv`, or IDE in
    ```bash
    export ALEPH_SUB_QUERY_BACKEND=api
    export ALEPH_SUB_QUERY_API_KEY=sk-...
-   export ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
+   export ALEPH_SUB_QUERY_MODEL=your-model-name
    ```
 
 3. Check logs for errors in the MCP client.
+
+### Sub-query timeout
+
+Increase the sub-query timeout and/or reduce context slice size:
+```bash
+export ALEPH_SUB_QUERY_TIMEOUT=120
+aleph --sub-query-timeout 120
+```
 
 ### Sandbox timeout
 

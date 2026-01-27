@@ -43,6 +43,11 @@ This installs three commands:
 | `alef` | Standalone CLI — run RLM loops directly from your terminal |
 | `aleph-rlm` | Setup utility — auto-configure MCP clients |
 
+Quick mental model:
+- Use `aleph-rlm` once to configure MCP clients.
+- Your MCP client runs `aleph` as the server command.
+- Use `alef` for standalone CLI mode.
+
 ### 2. Choose your mode
 
 **Option A: MCP Mode** (recommended for AI assistants)
@@ -64,7 +69,7 @@ Run `alef` directly from the command line — no MCP setup required.
 aleph-rlm install
 ```
 
-This auto-detects your installed clients and configures them.
+This auto-detects your installed clients and configures them. To confirm which client was configured, open the client config file (table below) and look for an `aleph` entry. If a client wasn't detected, install/update it and re-run `aleph-rlm install`, or use the manual config.
 
 **Manual** (any MCP client):
 ```json

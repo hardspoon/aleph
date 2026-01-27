@@ -94,7 +94,7 @@ I need you to install and configure Aleph (an MCP server for recursive LLM reaso
    **macOS/Linux** (add to ~/.zshrc or ~/.bashrc):
    ```bash
    export ALEPH_SUB_QUERY_API_KEY=sk-...
-   export ALEPH_SUB_QUERY_MODEL=gpt-5.2-codex
+   export ALEPH_SUB_QUERY_MODEL=your-model-name
    # Optional: OpenAI-compatible base URL (Groq, Together, local LLMs, etc.)
    export ALEPH_SUB_QUERY_URL=https://api.your-provider.com/v1
    ```
@@ -102,7 +102,7 @@ I need you to install and configure Aleph (an MCP server for recursive LLM reaso
    **Windows** (set via System Environment Variables or PowerShell $PROFILE):
    ```powershell
    $env:ALEPH_SUB_QUERY_API_KEY = "sk-..."
-   $env:ALEPH_SUB_QUERY_MODEL = "gpt-5.2-codex"
+   $env:ALEPH_SUB_QUERY_MODEL = "your-model-name"
    ```
 
    CLI backends (`claude`, `codex`, `gemini`) do not require an API key. Aleph will auto-detect the first available backend unless you set `ALEPH_SUB_QUERY_BACKEND`.
