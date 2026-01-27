@@ -232,6 +232,36 @@ Copy-Item "$alephPath\..\docs\prompts\aleph.md" "$env:USERPROFILE\.codex\skills\
 
 This enables the `$aleph` command in Codex.
 
+### Installing Kimi CLI Skill
+
+Kimi CLI searches for skills in these locations (in order):
+
+- `~/.config/agents/skills/`
+- `.agents/skills/` (project root)
+- `~/.agents/skills/`
+- `~/.kimi/skills/`
+- `~/.claude/skills/`
+- `~/.codex/skills/`
+- `.kimi/skills/` (project root)
+- `.claude/skills/` (project root)
+- `.codex/skills/` (project root)
+
+For RLM workflow prompts, install the Aleph skill in one of the first two locations:
+
+**Option 1 (recommended, user-level):**
+```bash
+mkdir -p ~/.config/agents/skills/aleph
+cp "$(python -c "import aleph; print(aleph.__path__[0])")/../docs/prompts/aleph.md" ~/.config/agents/skills/aleph/SKILL.md
+```
+
+**Option 2 (project-level):**
+```bash
+mkdir -p .agents/skills/aleph
+cp "$(python -c "import aleph; print(aleph.__path__[0])")/../docs/prompts/aleph.md" .agents/skills/aleph/SKILL.md
+```
+
+You can also override the search path with `--skills-dir`.
+
 ## Parameters Explained
 
 These parameters apply to `aleph`:
@@ -659,6 +689,31 @@ Then restart your terminal/MCP client.
 **Note:** This is a client-side limitation, not an aleph bug.
 
 ## Other MCP Clients
+
+### Kimi CLI
+
+Kimi CLI can manage MCP servers from the command line:
+
+```bash
+kimi mcp add --transport stdio aleph -- \
+  aleph --enable-actions --tool-docs concise --workspace-root /path/to/your-project
+```
+
+You can also edit the MCP config directly:
+
+- Config file: `~/.kimi/mcp.json`
+
+```json
+{
+  "mcpServers": {
+    "aleph": {
+      "transport": "stdio",
+      "command": "aleph",
+      "args": ["--enable-actions", "--tool-docs", "concise", "--workspace-root", "/path/to/your-project"]
+    }
+  }
+}
+```
 
 ### Windsurf
 

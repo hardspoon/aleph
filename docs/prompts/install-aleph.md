@@ -16,6 +16,7 @@ I need you to install and configure Aleph (an MCP server for recursive LLM reaso
 4. Windsurf - via windsurf MCP config
 5. Codex CLI - via ~/.codex/config.toml (macOS/Linux) or %USERPROFILE%\.codex\config.toml (Windows)
 6. Gemini CLI - via ~/.gemini/mcp.json
+7. Kimi CLI - via ~/.kimi/mcp.json
 
 **Tasks:**
 
@@ -62,7 +63,20 @@ I need you to install and configure Aleph (an MCP server for recursive LLM reaso
      "mcpServers": {
        "aleph": {
          "command": "aleph",
-        "args": ["--enable-actions", "--tool-docs", "concise", "--workspace-mode", "any"]
+         "args": ["--enable-actions", "--tool-docs", "concise", "--workspace-mode", "any"]
+       }
+     }
+   }
+   ```
+
+   **Kimi CLI** (~/.kimi/mcp.json):
+   ```json
+   {
+     "mcpServers": {
+       "aleph": {
+         "transport": "stdio",
+         "command": "aleph",
+         "args": ["--enable-actions", "--tool-docs", "concise", "--workspace-mode", "any"]
        }
      }
    }
@@ -80,11 +94,19 @@ I need you to install and configure Aleph (an MCP server for recursive LLM reaso
    - macOS/Linux: `~/.codex/skills/aleph/SKILL.md`
    - Windows: `%USERPROFILE%\.codex\skills\aleph\SKILL.md`
 
+   **Kimi CLI (recommended):**
+   - User-level: `~/.config/agents/skills/aleph/SKILL.md`
+   - Project-level: `.agents/skills/aleph/SKILL.md`
+
    Or from the installed package:
    ```bash
    # macOS/Linux
    mkdir -p ~/.codex/skills/aleph
    cp "$(python -c "import aleph; print(aleph.__path__[0])")/../docs/prompts/aleph.md" ~/.codex/skills/aleph/SKILL.md
+
+   # Kimi CLI (user-level)
+   mkdir -p ~/.config/agents/skills/aleph
+   cp "$(python -c "import aleph; print(aleph.__path__[0])")/../docs/prompts/aleph.md" ~/.config/agents/skills/aleph/SKILL.md
    ```
 
 5. Configure `sub_query` (optional):
