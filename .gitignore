@@ -36,6 +36,9 @@ texput.log
 .aleph/
 tmp/
 nedw cocomp/
+*session.json
+aleph_infinite*.json
+prompt-next.md
 
 # Deployment / debug logs
 wrangler.toml
