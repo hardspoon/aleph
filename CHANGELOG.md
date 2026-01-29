@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.8
+
+- Docs: Clarified CLI aliases (`aleph run` / `aleph-rlm run`) and updated MCP manual config args.
+
 ## 0.7.7
 
 - Added: `aleph-rlm configure` wizard for MCP client configs (workspace scope, sub-query backend, Docker).
