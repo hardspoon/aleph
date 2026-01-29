@@ -348,6 +348,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    if argv is None:
+        print(
+            "Note: 'alef' is deprecated. Use 'aleph run|shell|serve' or 'aleph-rlm run|shell|serve' instead.",
+            file=sys.stderr,
+        )
     parser = build_parser()
     args = parser.parse_args(argv)
 

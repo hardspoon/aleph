@@ -2783,6 +2783,11 @@ def main() -> None:
     import argparse
     import functools
 
+    if len(sys.argv) > 1 and sys.argv[1] in {"run", "shell", "serve"}:
+        from ..alef_cli import main as alef_main
+
+        raise SystemExit(alef_main(sys.argv[1:]))
+
     def _can_colorize_stream(stream: io.TextIOBase | None) -> bool:
         if stream is None:
             return False

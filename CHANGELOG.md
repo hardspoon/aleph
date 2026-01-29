@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.7
+
+- Added: `aleph-rlm configure` wizard for MCP client configs (workspace scope, sub-query backend, Docker).
+- Added: `aleph run|shell|serve` and `aleph-rlm run|shell|serve` as official CLI entrypoints; `alef` is now deprecated.
+- Added: Optional Dockerfile and install flow for containerized MCP server.
+- Fixed: Headless argparse colorization crash when stdout/stderr are closed.
+- Improved: Cached text context analysis to avoid repeat scans.
+
 ## 0.7.6
 
 - Removed: CoCap module and related REPL helpers.

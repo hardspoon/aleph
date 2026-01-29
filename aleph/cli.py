@@ -10,6 +10,9 @@ Provides easy installation of Aleph into various MCP clients:
 - Gemini CLI
 
 Usage:
+    aleph-rlm run <prompt>        Run a single Aleph query (alias for alef)
+    aleph-rlm shell               Interactive prompt loop (alias for alef)
+    aleph-rlm serve -- [args]     Run MCP server (alias for alef serve)
     aleph-rlm install           # Interactive mode, detects all clients
     aleph-rlm install claude-desktop
     aleph-rlm install cursor
@@ -18,6 +21,7 @@ Usage:
     aleph-rlm install codex
     aleph-rlm install gemini
     aleph-rlm install --all     # Configure all detected clients
+    aleph-rlm configure         # Interactive config wizard (overwrites selected clients)
     aleph-rlm uninstall <client>
     aleph-rlm doctor            # Verify installation
 """
@@ -239,11 +243,269 @@ CLIENTS: dict[str, ClientConfig] = {
     ),
 }
 
-# The JSON configuration to inject
-ALEPH_MCP_CONFIG = {
-    "command": "aleph",
-    "args": ["--enable-actions", "--workspace-mode", "any", "--tool-docs", "concise"],
-}
+@dataclass
+class MCPServerConfig:
+    command: str
+    args: list[str]
+    env: dict[str, str]
+
+    def to_json(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "command": self.command,
+            "args": self.args,
+        }
+        if self.env:
+            payload["env"] = self.env
+        return payload
+
+
+def _default_mcp_config() -> MCPServerConfig:
+    return MCPServerConfig(
+        command="aleph",
+        args=["--enable-actions", "--workspace-mode", "any", "--tool-docs", "concise"],
+        env={},
+    )
+
+
+def _format_toml_array(values: list[str]) -> str:
+    quoted = [json.dumps(v) for v in values]
+    return "[" + ", ".join(quoted) + "]"
+
+
+def _format_toml_env(env: dict[str, str]) -> str:
+    if not env:
+        return ""
+    lines = ["[mcp_servers.aleph.env]"]
+    for key in sorted(env.keys()):
+        lines.append(f"{key} = {json.dumps(env[key])}")
+    return "\n".join(lines) + "\n"
+
+
+def _format_toml_mcp_config(config: MCPServerConfig) -> str:
+    block = (
+        "[mcp_servers.aleph]\n"
+        f"command = {json.dumps(config.command)}\n"
+        f"args = {_format_toml_array(config.args)}\n"
+    )
+    env_block = _format_toml_env(config.env)
+    return block + env_block
+
+
+def _build_mcp_config(
+    *,
+    enable_actions: bool,
+    workspace_mode: str,
+    workspace_root: Path | None,
+    require_confirmation: bool,
+    tool_docs: str,
+    unrestricted: bool,
+    sub_query_backend: str | None,
+    sub_query_share_session: bool | None,
+    sub_query_timeout: float | None,
+    env_override: dict[str, str] | None = None,
+    command: str | None = None,
+    args_prefix: list[str] | None = None,
+) -> MCPServerConfig:
+    args: list[str] = list(args_prefix or [])
+    if enable_actions:
+        args.append("--enable-actions")
+    if workspace_root:
+        args.extend(["--workspace-root", str(workspace_root)])
+    args.extend(["--workspace-mode", workspace_mode])
+    if require_confirmation:
+        args.append("--require-confirmation")
+    args.extend(["--tool-docs", tool_docs])
+    if unrestricted:
+        args.append("--unrestricted")
+    if env_override is not None:
+        env = env_override
+    else:
+        env = {}
+        if sub_query_backend and sub_query_backend != "auto":
+            env["ALEPH_SUB_QUERY_BACKEND"] = sub_query_backend
+        if sub_query_share_session is not None:
+            env["ALEPH_SUB_QUERY_SHARE_SESSION"] = "true" if sub_query_share_session else "false"
+        if sub_query_timeout is not None:
+            env["ALEPH_SUB_QUERY_TIMEOUT"] = str(sub_query_timeout)
+
+    return MCPServerConfig(
+        command=command or "aleph",
+        args=args,
+        env=env,
+    )
+
+
+def _prompt_bool(prompt: str, default: bool = True) -> bool:
+    suffix = "Y/n" if default else "y/N"
+    while True:
+        try:
+            response = input(f"{prompt} [{suffix}]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\nAborted.")
+            raise SystemExit(1) from None
+        if response == "":
+            return default
+        if response in {"y", "yes"}:
+            return True
+        if response in {"n", "no"}:
+            return False
+        print("Please enter y or n.")
+
+
+def _prompt_choice(prompt: str, options: list[tuple[str, str]], default_index: int = 0) -> str:
+    print(prompt)
+    for idx, (value, label) in enumerate(options, start=1):
+        marker = " (default)" if idx - 1 == default_index else ""
+        print(f"  {idx}) {label}{marker}")
+    while True:
+        try:
+            response = input("Select an option: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nAborted.")
+            raise SystemExit(1) from None
+        if response == "":
+            return options[default_index][0]
+        if response.isdigit():
+            idx = int(response) - 1
+            if 0 <= idx < len(options):
+                return options[idx][0]
+        print("Please enter a valid number.")
+
+
+def _prompt_text(prompt: str, default: str | None = None) -> str:
+    suffix = f" [default: {default}]" if default else ""
+    while True:
+        try:
+            response = input(f"{prompt}{suffix}: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nAborted.")
+            raise SystemExit(1) from None
+        if response:
+            return response
+        if default is not None:
+            return default
+
+
+def _collect_install_config() -> MCPServerConfig:
+    print_header("Aleph MCP Server Configuration")
+
+    use_docker = False
+    if shutil.which("docker"):
+        use_docker = _prompt_bool("Run Aleph inside Docker for this config?", default=False)
+    else:
+        print_info("Docker not detected; skipping container option.")
+
+    enable_actions = _prompt_bool(
+        "Enable action tools (run_command/read_file/write_file/run_tests)?",
+        default=True,
+    )
+
+    workspace_mode = _prompt_choice(
+        "Workspace scope for action tools:",
+        [
+            ("fixed", "This workspace only (fixed path)"),
+            ("git", "Any git repository (auto-detect root)"),
+            ("any", "Any path (no restriction)"),
+        ],
+        default_index=2,
+    )
+
+    workspace_root: Path | None = None
+    if workspace_mode == "fixed" or use_docker:
+        default_root = str(Path.cwd())
+        workspace_root = Path(_prompt_text("Workspace root path", default=default_root)).resolve()
+        workspace_mode = "fixed"
+
+    require_confirmation = _prompt_bool("Require confirm=true for action tools?", default=False)
+
+    tool_docs = _prompt_choice(
+        "Tool docs verbosity:",
+        [("concise", "Concise (recommended)"), ("full", "Full descriptions")],
+        default_index=0,
+    )
+
+    unrestricted = _prompt_bool("Disable sandbox restrictions (unrestricted)?", default=False)
+
+    available_backends = []
+    for backend in ("codex", "gemini", "claude"):
+        if shutil.which(backend):
+            available_backends.append(backend)
+    backend_labels = ["auto (detect installed CLI or API)"]
+    backend_options = ["auto"]
+    for backend in ("codex", "gemini", "claude", "api"):
+        label = backend
+        if backend in available_backends:
+            label += " (detected)"
+        backend_labels.append(label)
+        backend_options.append(backend)
+    sub_query_backend = _prompt_choice(
+        "Sub-query backend preference:",
+        list(zip(backend_options, backend_labels)),
+        default_index=0,
+    )
+
+    sub_query_share_session = _prompt_bool(
+        "Share MCP session with sub-agents? (enables MCP access in sub-queries)",
+        default=False,
+    )
+
+    sub_query_timeout_input = _prompt_text("Sub-query timeout in seconds (blank to skip)", default="")
+    sub_query_timeout = None
+    if sub_query_timeout_input:
+        try:
+            sub_query_timeout = float(sub_query_timeout_input)
+        except ValueError:
+            print_warning("Invalid timeout; skipping.")
+            sub_query_timeout = None
+
+    env_override: dict[str, str] | None = None
+    args_prefix: list[str] | None = None
+    command = None
+    if use_docker:
+        image = _prompt_text("Docker image name", default="aleph-rlm:local")
+        if workspace_root is None:
+            workspace_root = Path.cwd().resolve()
+        command = "docker"
+        env_pairs: dict[str, str] = {}
+        if sub_query_backend and sub_query_backend != "auto":
+            env_pairs["ALEPH_SUB_QUERY_BACKEND"] = sub_query_backend
+        if sub_query_share_session is not None:
+            env_pairs["ALEPH_SUB_QUERY_SHARE_SESSION"] = (
+                "true" if sub_query_share_session else "false"
+            )
+        if sub_query_timeout is not None:
+            env_pairs["ALEPH_SUB_QUERY_TIMEOUT"] = str(sub_query_timeout)
+        env_flags: list[str] = []
+        for key, value in env_pairs.items():
+            env_flags.extend(["-e", f"{key}={value}"])
+        env_override = {}
+        args_prefix = [
+            "run",
+            "--rm",
+            "-i",
+            "-v",
+            f"{workspace_root}:{workspace_root}",
+            "-w",
+            str(workspace_root),
+            *env_flags,
+            image,
+            "aleph",
+        ]
+
+    return _build_mcp_config(
+        enable_actions=enable_actions,
+        workspace_mode=workspace_mode,
+        workspace_root=workspace_root,
+        require_confirmation=require_confirmation,
+        tool_docs=tool_docs,
+        unrestricted=unrestricted,
+        sub_query_backend=sub_query_backend,
+        sub_query_share_session=sub_query_share_session,
+        sub_query_timeout=sub_query_timeout,
+        env_override=env_override,
+        command=command,
+        args_prefix=args_prefix,
+    )
 
 
 # =============================================================================
@@ -436,6 +698,8 @@ def is_aleph_configured_toml(client: ClientConfig) -> bool:
 def install_to_toml_config(
     client: ClientConfig,
     dry_run: bool = False,
+    mcp_config: MCPServerConfig | None = None,
+    force: bool = False,
 ) -> bool:
     """Install Aleph to a TOML config file (Codex)."""
     path = client.get_path()
@@ -452,15 +716,12 @@ def install_to_toml_config(
     else:
         config_text = ""
 
-    if _toml_section_exists(config_text, "mcp_servers.aleph"):
+    if _toml_section_exists(config_text, "mcp_servers.aleph") and not force:
         print_warning(f"Aleph is already configured in {client.display_name}")
         return True
 
-    block = (
-        "[mcp_servers.aleph]\n"
-        "command = \"aleph\"\n"
-        "args = [\"--enable-actions\", \"--workspace-mode\", \"any\", \"--tool-docs\", \"concise\"]\n"
-    )
+    config = mcp_config or _default_mcp_config()
+    block = _format_toml_mcp_config(config)
 
     if dry_run:
         print_info(f"[DRY RUN] Would write to: {path}")
@@ -475,6 +736,10 @@ def install_to_toml_config(
             print_info(f"Backed up existing config to: {backup}")
 
     new_text = config_text
+    if force:
+        new_text = _remove_toml_section(new_text, "mcp_servers.aleph.env")
+        new_text = _remove_toml_section(new_text, "mcp_servers.aleph")
+        new_text = new_text.rstrip()
     if new_text and not new_text.endswith("\n"):
         new_text += "\n"
     if new_text and not new_text.endswith("\n\n"):
@@ -552,6 +817,8 @@ def uninstall_from_toml_config(
 def install_to_config_file(
     client: ClientConfig,
     dry_run: bool = False,
+    mcp_config: MCPServerConfig | None = None,
+    force: bool = False,
 ) -> bool:
     """Install Aleph to a JSON config file."""
     path = client.get_path()
@@ -578,12 +845,13 @@ def install_to_config_file(
         config["mcpServers"] = {}
 
     # Check if already configured
-    if "aleph" in config["mcpServers"]:
+    if "aleph" in config["mcpServers"] and not force:
         print_warning(f"Aleph is already configured in {client.display_name}")
         return True
 
     # Add Aleph config
-    config["mcpServers"]["aleph"] = ALEPH_MCP_CONFIG.copy()
+    payload = (mcp_config or _default_mcp_config()).to_json()
+    config["mcpServers"]["aleph"] = payload
 
     if dry_run:
         print_info(f"[DRY RUN] Would write to: {path}")
@@ -620,7 +888,11 @@ def install_to_config_file(
     return True
 
 
-def install_to_claude_code(dry_run: bool = False) -> bool:
+def install_to_claude_code(
+    dry_run: bool = False,
+    mcp_config: MCPServerConfig | None = None,
+    force: bool = False,
+) -> bool:
     """Install Aleph to Claude Code using CLI."""
     claude_exe = _find_claude_cli()
     if not claude_exe:
@@ -629,11 +901,21 @@ def install_to_claude_code(dry_run: bool = False) -> bool:
             print_info("If installed via NPM, ensure %APPDATA%\\npm is in your PATH")
         return False
 
+    config = mcp_config or _default_mcp_config()
+    if config.env:
+        print_warning("Claude Code CLI does not support MCP env injection; skipping env vars.")
+    arg_str = " ".join(config.args)
     if dry_run:
+        if force:
+            print_info(f"[DRY RUN] Would run: {claude_exe} mcp remove aleph")
         print_info(
-            f"[DRY RUN] Would run: {claude_exe} mcp add aleph aleph -- --enable-actions --workspace-mode any --tool-docs concise"
+            f"[DRY RUN] Would run: {claude_exe} mcp add aleph {config.command} -- {arg_str}"
         )
         return True
+
+    if force:
+        if not uninstall_from_claude_code(dry_run=False):
+            return False
 
     try:
         result = subprocess.run(
@@ -642,13 +924,9 @@ def install_to_claude_code(dry_run: bool = False) -> bool:
                 "mcp",
                 "add",
                 "aleph",
-                "aleph",
+                config.command,
                 "--",
-                "--enable-actions",
-                "--workspace-mode",
-                "any",
-                "--tool-docs",
-                "concise",
+                *config.args,
             ],
             capture_output=True,
             text=True,
@@ -663,8 +941,11 @@ def install_to_claude_code(dry_run: bool = False) -> bool:
         else:
             # Check if it's already installed
             if "already exists" in result.stderr.lower():
-                print_warning("Aleph is already configured in Claude Code")
-                return True
+                if force:
+                    print_warning("Aleph already configured in Claude Code; remove first and retry.")
+                else:
+                    print_warning("Aleph is already configured in Claude Code")
+                return not force
             print_error(f"Failed to add Aleph to Claude Code: {result.stderr}")
             return False
     except subprocess.TimeoutExpired:
@@ -764,13 +1045,18 @@ def uninstall_from_claude_code(dry_run: bool = False) -> bool:
         return False
 
 
-def install_client(client: ClientConfig, dry_run: bool = False) -> bool:
+def install_client(
+    client: ClientConfig,
+    dry_run: bool = False,
+    mcp_config: MCPServerConfig | None = None,
+    force: bool = False,
+) -> bool:
     """Install Aleph to a specific client."""
     if client.is_cli:
-        return install_to_claude_code(dry_run)
+        return install_to_claude_code(dry_run, mcp_config=mcp_config, force=force)
     if client.config_format == "toml":
-        return install_to_toml_config(client, dry_run)
-    return install_to_config_file(client, dry_run)
+        return install_to_toml_config(client, dry_run, mcp_config=mcp_config, force=force)
+    return install_to_config_file(client, dry_run, mcp_config=mcp_config, force=force)
 
 
 def uninstall_client(client: ClientConfig, dry_run: bool = False) -> bool:
@@ -921,15 +1207,21 @@ def interactive_install(dry_run: bool = False) -> None:
         print_info("No clients to configure.")
         return
 
+    use_custom = _prompt_bool("Customize server configuration for this install?", default=True)
+    mcp_config = _collect_install_config() if use_custom else _default_mcp_config()
+
     print()
     for client in to_configure:
-        install_client(client, dry_run)
+        install_client(client, dry_run, mcp_config=mcp_config)
         print()
 
 
 def install_all(dry_run: bool = False) -> None:
     """Install Aleph to all detected clients."""
     print_header("Installing Aleph to All Detected Clients")
+
+    use_custom = _prompt_bool("Customize server configuration for this install?", default=True)
+    mcp_config = _collect_install_config() if use_custom else _default_mcp_config()
 
     for name, client in CLIENTS.items():
         if not is_client_installed(client):
@@ -940,7 +1232,52 @@ def install_all(dry_run: bool = False) -> None:
             print_info(f"Skipping {client.display_name} (already configured)")
             continue
 
-        install_client(client, dry_run)
+        install_client(client, dry_run, mcp_config=mcp_config)
+        print()
+
+
+def configure_clients(dry_run: bool = False) -> None:
+    """Interactive configuration wizard (overwrites selected clients)."""
+    print_header("Aleph MCP Server Configurator")
+
+    detected = []
+    for name, client in CLIENTS.items():
+        if is_client_installed(client):
+            configured = is_aleph_configured(client)
+            detected.append((name, client, configured))
+
+    if not detected:
+        print_warning("No MCP clients detected!")
+        print_info("Supported clients: Claude Desktop, Cursor, Windsurf, VSCode, Claude Code, Codex CLI")
+        return
+
+    rows = []
+    for name, client, configured in detected:
+        status = "Configured" if configured else "Not configured"
+        path = client.get_path()
+        path_str = "(CLI)" if client.is_cli else str(path) if path else "-"
+        rows.append((client.display_name, status, path_str))
+    print_table("Detected Clients", rows)
+
+    to_configure = []
+    for name, client, configured in detected:
+        label = "Overwrite config" if configured else "Configure"
+        try:
+            response = input(f"{label} for {client.display_name}? [Y/n]: ").strip().lower()
+            if response in ("", "y", "yes"):
+                to_configure.append(client)
+        except (EOFError, KeyboardInterrupt):
+            print("\nAborted.")
+            return
+
+    if not to_configure:
+        print_info("No clients selected.")
+        return
+
+    mcp_config = _collect_install_config()
+    print()
+    for client in to_configure:
+        install_client(client, dry_run, mcp_config=mcp_config, force=True)
         print()
 
 
@@ -954,9 +1291,13 @@ def print_usage() -> None:
 Aleph MCP Server Installer
 
 Usage:
+    aleph-rlm run <prompt>        Run a single Aleph query (alias for alef)
+    aleph-rlm shell               Interactive prompt loop (alias for alef)
+    aleph-rlm serve -- [args]     Run MCP server (alias for alef serve)
     aleph-rlm install              Interactive mode - detect and configure clients
     aleph-rlm install <client>     Configure a specific client
     aleph-rlm install --all        Configure all detected clients
+    aleph-rlm configure            Interactive config wizard (overwrites selected clients)
     aleph-rlm uninstall <client>   Remove Aleph from a client
     aleph-rlm doctor               Verify installation
 
@@ -975,10 +1316,12 @@ Options:
     --help, -h         Show this help message
 
 Examples:
+    aleph-rlm run "Summarize this file"
     aleph-rlm install                     # Interactive mode
     aleph-rlm install claude-desktop      # Configure Claude Desktop
     aleph-rlm install codex               # Configure Codex CLI
     aleph-rlm install --all --dry-run     # Preview all installations
+    aleph-rlm configure                   # Configure server settings + overwrite clients
     aleph-rlm uninstall cursor            # Remove from Cursor
     aleph-rlm doctor                      # Check installation status
 """)
@@ -1002,6 +1345,18 @@ def main() -> None:
         success = doctor()
         sys.exit(0 if success else 1)
 
+    elif command == "run":
+        from .alef_cli import main as alef_main
+        sys.exit(alef_main(args[1:]))
+
+    elif command == "shell":
+        from .alef_cli import main as alef_main
+        sys.exit(alef_main(args[1:]))
+
+    elif command == "serve":
+        from .alef_cli import main as alef_main
+        sys.exit(alef_main(args[1:]))
+
     elif command == "install":
         if len(args) == 1:
             # Interactive mode
@@ -1016,6 +1371,9 @@ def main() -> None:
             print_error(f"Unknown client: {args[1]}")
             print_info(f"Available clients: {', '.join(CLIENTS.keys())}")
             sys.exit(1)
+
+    elif command == "configure":
+        configure_clients(dry_run)
 
     elif command == "uninstall":
         if len(args) < 2:

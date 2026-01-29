@@ -39,14 +39,14 @@ This installs three commands:
 
 | Command | Purpose |
 |---------|---------|
-| `aleph` | MCP server — connect from any MCP client |
-| `alef` | Standalone CLI — run RLM loops directly from your terminal |
-| `aleph-rlm` | Setup utility — auto-configure MCP clients |
+| `aleph` | MCP server — connect from any MCP client (also supports `run`/`shell`) |
+| `alef` | Standalone CLI — deprecated (use `aleph run` or `aleph-rlm run`) |
+| `aleph-rlm` | Setup utility — auto-configure MCP clients (also supports `run`/`shell`) |
 
 Quick mental model:
 - Use `aleph-rlm` once to configure MCP clients.
 - Your MCP client runs `aleph` as the server command.
-- Use `alef` for standalone CLI mode.
+- Use `aleph run` or `aleph-rlm run` for standalone CLI mode (replaces `alef`).
 
 ### 2. Choose your mode
 
@@ -56,7 +56,7 @@ Configure your MCP client to use the `aleph` server, then interact via tool call
 
 **Option B: CLI Mode** (standalone terminal use)
 
-Run `alef` directly from the command line — no MCP setup required.
+Run `aleph run` (or `aleph-rlm run`) directly from the command line — no MCP setup required.
 
 ---
 
@@ -69,7 +69,14 @@ Run `alef` directly from the command line — no MCP setup required.
 aleph-rlm install
 ```
 
-This auto-detects your installed clients and configures them. To confirm which client was configured, open the client config file (table below) and look for an `aleph` entry. If a client wasn't detected, install/update it and re-run `aleph-rlm install`, or use the manual config.
+This auto-detects your installed clients and configures them with sensible defaults.
+
+To customize server settings (workspace scope, sub-query backend, Docker, etc.) use:
+```bash
+aleph-rlm configure
+```
+
+To confirm which client was configured, open the client config file (table below) and look for an `aleph` entry. If a client wasn't detected, install/update it and re-run `aleph-rlm install`, or use the manual config.
 
 **Manual** (any MCP client):
 ```json
@@ -82,6 +89,13 @@ This auto-detects your installed clients and configures them. To confirm which c
   }
 }
 ```
+
+**Docker (optional):**
+If you want the MCP server to run inside a container, build the image once:
+```bash
+docker build -t aleph-rlm:local .
+```
+Then use `aleph-rlm configure` and choose the Docker option.
 
 <details>
 <summary><strong>Config file locations</strong></summary>
@@ -109,9 +123,9 @@ If using Claude Code, tools are prefixed: `mcp__aleph__get_status`.
 
 ---
 
-## CLI Mode (`alef`)
+## CLI Mode (`aleph run`)
 
-The `alef` command runs the full RLM reasoning loop directly from your terminal. It uses local CLI tools (`claude`, `codex`, or `gemini`) as the LLM backend — no separate Aleph API keys needed, just the CLI tool's own authentication.
+The `aleph run` command runs the full RLM reasoning loop directly from your terminal. It uses local CLI tools (`claude`, `codex`, or `gemini`) as the LLM backend — no separate Aleph API keys needed, just the CLI tool's own authentication.
 
 **Prerequisites:** Have `claude`, `codex`, or `gemini` CLI installed and authenticated.
 
@@ -119,16 +133,16 @@ The `alef` command runs the full RLM reasoning loop directly from your terminal.
 
 ```bash
 # Simple query
-alef run "What is 2+2?" --provider cli --model claude
+aleph run "What is 2+2?" --provider cli --model claude
 
 # With context from a file
-alef run "Summarize this log" --provider cli --model claude --context-file app.log
+aleph run "Summarize this log" --provider cli --model claude --context-file app.log
 
 # JSON context
-alef run "Extract all names" --provider cli --model claude --context '{"users": [{"name": "Alice"}, {"name": "Bob"}]}'
+aleph run "Extract all names" --provider cli --model claude --context '{"users": [{"name": "Alice"}, {"name": "Bob"}]}'
 
 # Full JSON output with trajectory
-alef run "Analyze this data" --provider cli --model claude --context-file data.json --json --include-trajectory
+aleph run "Analyze this data" --provider cli --model claude --context-file data.json --json --include-trajectory
 ```
 
 ### With Sub-Queries (Multi-Claude Recursion)
@@ -140,7 +154,7 @@ Enable recursive sub-queries where the LLM spawns additional Claude calls:
 export ALEPH_SUB_QUERY_BACKEND=claude
 
 # Run a complex analysis that uses sub_query()
-alef run "For each item in the context, use sub_query to summarize it, then combine results" \
+aleph run "For each item in the context, use sub_query to summarize it, then combine results" \
   --provider cli --model claude \
   --context '{"items": [{"name": "Alice", "score": 95}, {"name": "Bob", "score": 87}]}' \
   --max-iterations 10
