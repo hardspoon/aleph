@@ -40,7 +40,7 @@ async def run_cli_sub_query(
     prompt: str,
     context_slice: str | None = None,
     backend: Literal["claude", "codex", "gemini"] = "claude",
-    timeout: float = 120.0,
+    timeout: float = 300.0,
     cwd: Path | None = None,
     max_output_chars: int = 50_000,
     mcp_server_url: str | None = None,

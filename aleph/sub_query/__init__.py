@@ -85,11 +85,11 @@ class SubQueryConfig:
     backend: BackendType = "auto"
 
     # CLI options
-    cli_timeout_seconds: float = 120.0
+    cli_timeout_seconds: float = 300.0
     cli_max_output_chars: int = 50_000
 
     # API options
-    api_timeout_seconds: float = 60.0
+    api_timeout_seconds: float = 120.0
     api_key_env: str = DEFAULT_API_KEY_ENV
     api_base_url_env: str = DEFAULT_API_BASE_URL_ENV
     api_model_env: str = DEFAULT_API_MODEL_ENV

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.9
+
+- Improved: Increased sub-query timeout defaults (CLI: 120s -> 300s, API: 60s -> 120s).
+
 ## 0.7.8
 
 - Docs: Clarified CLI aliases (`aleph run` / `aleph-rlm run`) and updated MCP manual config args.
