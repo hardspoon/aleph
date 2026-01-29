@@ -57,6 +57,7 @@ Configure your MCP client to use the `aleph` server, then interact via tool call
 **Option B: CLI Mode** (standalone terminal use)
 
 Run `aleph run` (or `aleph-rlm run`) directly from the command line — no MCP setup required.
+(`alef` still works for now but is deprecated.)
 
 ---
 
@@ -84,7 +85,7 @@ To confirm which client was configured, open the client config file (table below
   "mcpServers": {
     "aleph": {
       "command": "aleph",
-      "args": ["--enable-actions", "--workspace-mode", "any"]
+      "args": ["--enable-actions", "--workspace-mode", "any", "--tool-docs", "concise"]
     }
   }
 }
@@ -123,9 +124,9 @@ If using Claude Code, tools are prefixed: `mcp__aleph__get_status`.
 
 ---
 
-## CLI Mode (`aleph run`)
+## CLI Mode (`aleph run` / `aleph-rlm run`)
 
-The `aleph run` command runs the full RLM reasoning loop directly from your terminal. It uses local CLI tools (`claude`, `codex`, or `gemini`) as the LLM backend — no separate Aleph API keys needed, just the CLI tool's own authentication.
+The `aleph run` command runs the full RLM reasoning loop directly from your terminal. It uses local CLI tools (`claude`, `codex`, or `gemini`) as the LLM backend — no separate Aleph API keys needed, just the CLI tool's own authentication. (`aleph-rlm run` works the same.)
 
 **Prerequisites:** Have `claude`, `codex`, or `gemini` CLI installed and authenticated.
 
@@ -318,7 +319,7 @@ You are an AI coding assistant. Please set up Aleph (Model Context Protocol / MC
   "mcpServers": {
     "aleph": {
       "command": "aleph",
-      "args": ["--enable-actions", "--workspace-mode", "any"]
+      "args": ["--enable-actions", "--workspace-mode", "any", "--tool-docs", "concise"]
     }
   }
 }
