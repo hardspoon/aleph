@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import bz2
+from collections import OrderedDict
 from contextlib import AsyncExitStack
 import difflib
 import fnmatch
@@ -58,7 +59,7 @@ from ..core import Aleph
 from ..prompts.system import DEFAULT_SYSTEM_PROMPT
 from ..providers.registry import get_provider
 from ..repl.sandbox import REPLEnvironment, SandboxConfig
-from ..types import AlephResponse, Budget, ContentFormat, ContextMetadata, ContextType
+from ..types import AlephResponse, Budget, ContentFormat, ContextMetadata, ContextType, ExecutionResult
 from ..sub_query import SubQueryConfig, detect_backend
 from ..sub_query.cli_backend import run_cli_sub_query, CLI_BACKENDS
 from ..sub_query.api_backend import run_api_sub_query
@@ -312,9 +313,19 @@ def _load_text_from_path(
     return text, fmt, warning
 
 
+_ANALYZE_CACHE_MAX = 64
+_ANALYZE_CACHE: OrderedDict[tuple[int, int, ContentFormat], ContextMetadata] = OrderedDict()
+
+
 def _analyze_text_context(text: str, fmt: ContentFormat) -> ContextMetadata:
     """Analyze text and return metadata."""
-    return ContextMetadata(
+    key = (hash(text), len(text), fmt)
+    cached = _ANALYZE_CACHE.get(key)
+    if cached is not None:
+        _ANALYZE_CACHE.move_to_end(key)
+        return cached
+
+    meta = ContextMetadata(
         format=fmt,
         size_bytes=len(text.encode("utf-8", errors="ignore")),
         size_chars=len(text),
@@ -323,6 +334,10 @@ def _analyze_text_context(text: str, fmt: ContentFormat) -> ContextMetadata:
         structure_hint=None,
         sample_preview=text[:500],
     )
+    _ANALYZE_CACHE[key] = meta
+    if len(_ANALYZE_CACHE) > _ANALYZE_CACHE_MAX:
+        _ANALYZE_CACHE.popitem(last=False)
+    return meta
 
 
 _FINAL_RE = re.compile(r"FINAL\((.*?)\)", re.DOTALL)
@@ -1555,96 +1570,274 @@ class AlephMCPServerLocal:
             return False
         return True
 
-    def _register_tools(self) -> None:
-        """Register all MCP tools."""
+    def _format_context_loaded(
+        self,
+        context_id: str,
+        meta: ContextMetadata,
+        line_number_base: LineNumberBase,
+        note: str | None = None,
+    ) -> str:
+        line_desc = "1-based" if line_number_base == 1 else "0-based"
+        msg = (
+            f"Context loaded '{context_id}': {meta.size_chars:,} chars, "
+            f"{meta.size_lines:,} lines, ~{meta.size_tokens_estimate:,} tokens "
+            f"(line numbers {line_desc})."
+        )
+        if note:
+            msg += f"\nNote: {note}"
+        return msg
 
-        def _format_context_loaded(
-            context_id: str,
-            meta: ContextMetadata,
-            line_number_base: LineNumberBase,
-            note: str | None = None,
-        ) -> str:
-            line_desc = "1-based" if line_number_base == 1 else "0-based"
-            msg = (
-                f"Context loaded '{context_id}': {meta.size_chars:,} chars, "
-                f"{meta.size_lines:,} lines, ~{meta.size_tokens_estimate:,} tokens "
-                f"(line numbers {line_desc})."
-            )
-            if note:
-                msg += f"\nNote: {note}"
-            return msg
+    def _create_session(
+        self,
+        context: str,
+        context_id: str,
+        fmt: ContentFormat,
+        line_number_base: LineNumberBase,
+    ) -> ContextMetadata:
+        meta = _analyze_text_context(context, fmt)
+        repl = REPLEnvironment(
+            context=context,
+            context_var_name="ctx",
+            config=self.sandbox_config,
+            loop=asyncio.get_running_loop(),
+        )
+        repl.set_variable("line_number_base", line_number_base)
+        self._sessions[context_id] = _Session(
+            repl=repl,
+            meta=meta,
+            line_number_base=line_number_base,
+        )
+        self._configure_session(self._sessions[context_id], context_id, loop=asyncio.get_running_loop())
+        return meta
 
-        def _create_session(
-            context: str,
-            context_id: str,
-            fmt: ContentFormat,
-            line_number_base: LineNumberBase,
-        ) -> ContextMetadata:
-            meta = _analyze_text_context(context, fmt)
-            repl = REPLEnvironment(
-                context=context,
-                context_var_name="ctx",
-                config=self.sandbox_config,
-                loop=asyncio.get_running_loop(),
-            )
-            repl.set_variable("line_number_base", line_number_base)
-            self._sessions[context_id] = _Session(
-                repl=repl,
-                meta=meta,
-                line_number_base=line_number_base,
-            )
-            self._configure_session(self._sessions[context_id], context_id, loop=asyncio.get_running_loop())
-            return meta
-
-        def _get_or_create_session(
-            context_id: str,
-            line_number_base: LineNumberBase | None = None,
-        ) -> _Session:
-            session = self._sessions.get(context_id)
-            if session is not None:
-                self._configure_session(session, context_id, loop=asyncio.get_running_loop())
-                return session
-
-            base = line_number_base if line_number_base is not None else DEFAULT_LINE_NUMBER_BASE
-            meta = _analyze_text_context("", ContentFormat.TEXT)
-            repl = REPLEnvironment(
-                context="",
-                context_var_name="ctx",
-                config=self.sandbox_config,
-                loop=asyncio.get_running_loop(),
-            )
-            repl.set_variable("line_number_base", base)
-            session = _Session(repl=repl, meta=meta, line_number_base=base)
-            self._sessions[context_id] = session
+    def _get_or_create_session(
+        self,
+        context_id: str,
+        line_number_base: LineNumberBase | None = None,
+    ) -> _Session:
+        session = self._sessions.get(context_id)
+        if session is not None:
             self._configure_session(session, context_id, loop=asyncio.get_running_loop())
             return session
 
-        def _first_doc_line(fn: Any) -> str:
+        base = line_number_base if line_number_base is not None else DEFAULT_LINE_NUMBER_BASE
+        meta = _analyze_text_context("", ContentFormat.TEXT)
+        repl = REPLEnvironment(
+            context="",
+            context_var_name="ctx",
+            config=self.sandbox_config,
+            loop=asyncio.get_running_loop(),
+        )
+        repl.set_variable("line_number_base", base)
+        session = _Session(repl=repl, meta=meta, line_number_base=base)
+        self._sessions[context_id] = session
+        self._configure_session(session, context_id, loop=asyncio.get_running_loop())
+        return session
+
+    def _first_doc_line(self, fn: Any) -> str:
+        doc = inspect.getdoc(fn) or ""
+        for line in doc.splitlines():
+            line = line.strip()
+            if line:
+                return line
+        return ""
+
+    def _short_description(self, fn: Any, override: str | None) -> str:
+        desc = (override or self._first_doc_line(fn)).strip()
+        if not desc:
+            desc = fn.__name__.replace("_", " ")
+        max_len = 120
+        if len(desc) > max_len:
+            desc = desc[: max_len - 3].rstrip() + "..."
+        return desc
+
+    def _tool_decorator(self, description: str | None = None, **kwargs: Any) -> Any:
+        def decorator(fn: Any) -> Any:
             doc = inspect.getdoc(fn) or ""
-            for line in doc.splitlines():
-                line = line.strip()
-                if line:
-                    return line
-            return ""
+            if self.tool_docs_mode == "full" and doc:
+                return self.server.tool(**kwargs)(fn)
+            desc = self._short_description(fn, description)
+            return self.server.tool(description=desc, **kwargs)(fn)
 
-        def _short_description(fn: Any, override: str | None) -> str:
-            desc = (override or _first_doc_line(fn)).strip()
-            if not desc:
-                desc = fn.__name__.replace("_", " ")
-            max_len = 120
-            if len(desc) > max_len:
-                desc = desc[: max_len - 3].rstrip() + "..."
-            return desc
+        return decorator
 
-        def _tool(description: str | None = None, **kwargs: Any) -> Any:
-            def decorator(fn: Any) -> Any:
-                doc = inspect.getdoc(fn) or ""
-                if self.tool_docs_mode == "full" and doc:
-                    return self.server.tool(**kwargs)(fn)
-                desc = _short_description(fn, description)
-                return self.server.tool(description=desc, **kwargs)(fn)
+    def _require_actions(self, confirm: bool) -> str | None:
+        if not self.action_config.enabled:
+            return "Actions are disabled. Start the server with `--enable-actions`."
+        if self.action_config.require_confirmation and not confirm:
+            return "Confirmation required. Re-run with confirm=true."
+        return None
 
-            return decorator
+    def _record_action(self, session: _Session | None, note: str, snippet: str) -> None:
+        if session is None:
+            return
+        evidence_before = len(session.evidence)
+        session.evidence.append(
+            _Evidence(
+                source="action",
+                line_range=None,
+                pattern=None,
+                note=note,
+                snippet=snippet[:200],
+            )
+        )
+        session.information_gain.append(len(session.evidence) - evidence_before)
+
+    def _build_memory_pack_payload(self) -> tuple[dict[str, Any], list[str]]:
+        sessions_payload: list[dict[str, Any]] = []
+        skipped: list[str] = []
+        for sid, sess in self._sessions.items():
+            try:
+                sessions_payload.append(_session_to_payload(sid, sess))
+            except Exception:
+                skipped.append(sid)
+        payload = {
+            "schema": "aleph.memory_pack.v1",
+            "created_at": datetime.now().isoformat(),
+            "sessions": sessions_payload,
+            "skipped": skipped,
+        }
+        return payload, skipped
+
+    async def _run_subprocess(
+        self,
+        argv: list[str],
+        cwd: Path,
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        start = time.perf_counter()
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            cwd=str(cwd),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        timed_out = False
+        try:
+            stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout_seconds)
+        except asyncio.TimeoutError:
+            timed_out = True
+            proc.kill()
+            stdout_b, stderr_b = await proc.communicate()
+
+        duration_ms = (time.perf_counter() - start) * 1000.0
+        stdout = stdout_b.decode("utf-8", errors="replace")
+        stderr = stderr_b.decode("utf-8", errors="replace")
+        if len(stdout) > self.action_config.max_output_chars:
+            stdout = stdout[: self.action_config.max_output_chars] + "\n... (truncated)"
+        if len(stderr) > self.action_config.max_output_chars:
+            stderr = stderr[: self.action_config.max_output_chars] + "\n... (truncated)"
+
+        return {
+            "argv": argv,
+            "cwd": str(cwd),
+            "exit_code": proc.returncode,
+            "timed_out": timed_out,
+            "duration_ms": duration_ms,
+            "stdout": stdout,
+            "stderr": stderr,
+        }
+
+    def _parse_rg_vimgrep(self, output: str, max_results: int) -> tuple[list[dict[str, Any]], bool]:
+        results: list[dict[str, Any]] = []
+        truncated = False
+        limit = max_results if max_results > 0 else None
+        for line in output.splitlines():
+            parts = line.split(":", 3)
+            if len(parts) < 4:
+                continue
+            path_str, line_str, col_str, text = parts
+            try:
+                line_no = int(line_str)
+                col_no = int(col_str)
+            except ValueError:
+                continue
+            results.append({
+                "path": path_str,
+                "line": line_no,
+                "column": col_no,
+                "text": text,
+            })
+            if limit is not None and len(results) >= limit:
+                truncated = True
+                break
+        return results, truncated
+
+    def _python_rg_search(
+        self,
+        pattern: str,
+        roots: list[Path],
+        glob_pattern: str | None,
+        max_results: int,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        results: list[dict[str, Any]] = []
+        truncated = False
+        limit = max_results if max_results > 0 else None
+        rx = re.compile(pattern)
+        skip_dirs = {".git", ".venv", "node_modules", "dist", "build", "__pycache__", ".mypy_cache", ".pytest_cache"}
+
+        def _iter_files(root: Path) -> Iterable[Path]:
+            if root.is_file():
+                yield root
+                return
+            for path in root.rglob("*"):
+                if path.is_dir():
+                    continue
+                if any(part in skip_dirs for part in path.parts):
+                    continue
+                yield path
+
+        for root in roots:
+            for path in _iter_files(root):
+                if glob_pattern and not fnmatch.fnmatch(path.name, glob_pattern):
+                    continue
+                try:
+                    if path.stat().st_size > self.action_config.max_read_bytes:
+                        continue
+                    with open(path, "r", encoding="utf-8", errors="replace") as f:
+                        for idx, line in enumerate(f, start=1):
+                            match = rx.search(line)
+                            if not match:
+                                continue
+                            results.append({
+                                "path": str(path),
+                                "line": idx,
+                                "column": match.start() + 1,
+                                "text": line.rstrip("\n"),
+                            })
+                            if limit is not None and len(results) >= limit:
+                                truncated = True
+                                return results, truncated
+                except Exception:
+                    continue
+        return results, truncated
+
+    def _auto_save_memory_pack(self) -> None:
+        if not self.action_config.enabled or not self._sessions:
+            return
+        payload, _ = self._build_memory_pack_payload()
+        out_bytes = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8", errors="replace")
+        if len(out_bytes) > self.action_config.max_write_bytes:
+            return
+        try:
+            p = _scoped_path(
+                self.action_config.workspace_root,
+                ".aleph/memory_pack.json",
+                self.action_config.workspace_mode,
+            )
+        except Exception:
+            return
+        p.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with open(p, "wb") as f:
+                f.write(out_bytes)
+        except Exception:
+            return
+        for sess in self._sessions.values():
+            self._record_action(sess, note="auto_save_memory_pack", snippet=str(p))
+
+    def _register_core_tools(self) -> None:
+        _tool = self._tool_decorator
 
         @_tool()
         async def load_context(
@@ -1678,523 +1871,149 @@ class AlephMCPServerLocal:
                 return f"Error: {e}"
 
             fmt = _detect_format(text) if format == "auto" else ContentFormat(format)
-            meta = _create_session(text, context_id, fmt, base)
-            return _format_context_loaded(context_id, meta, base)
+            meta = self._create_session(text, context_id, fmt, base)
+            return self._format_context_loaded(context_id, meta, base)
 
-        def _require_actions(confirm: bool) -> str | None:
-            if not self.action_config.enabled:
-                return "Actions are disabled. Start the server with `--enable-actions`."
-            if self.action_config.require_confirmation and not confirm:
-                return "Confirmation required. Re-run with confirm=true."
-            return None
-
-        def _record_action(session: _Session | None, note: str, snippet: str) -> None:
-            if session is None:
-                return
-            evidence_before = len(session.evidence)
-            session.evidence.append(
-                _Evidence(
-                    source="action",
-                    line_range=None,
-                    pattern=None,
-                    note=note,
-                    snippet=snippet[:200],
-                )
-            )
-            session.information_gain.append(len(session.evidence) - evidence_before)
-
-        def _build_memory_pack_payload() -> tuple[dict[str, Any], list[str]]:
-            sessions_payload: list[dict[str, Any]] = []
-            skipped: list[str] = []
-            for sid, sess in self._sessions.items():
-                try:
-                    sessions_payload.append(_session_to_payload(sid, sess))
-                except Exception:
-                    skipped.append(sid)
-            payload = {
-                "schema": "aleph.memory_pack.v1",
-                "created_at": datetime.now().isoformat(),
-                "sessions": sessions_payload,
-                "skipped": skipped,
-            }
-            return payload, skipped
-
-        async def _run_subprocess(
-            argv: list[str],
-            cwd: Path,
-            timeout_seconds: float,
-        ) -> dict[str, Any]:
-            start = time.perf_counter()
-            proc = await asyncio.create_subprocess_exec(
-                *argv,
-                cwd=str(cwd),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            timed_out = False
-            try:
-                stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout_seconds)
-            except asyncio.TimeoutError:
-                timed_out = True
-                proc.kill()
-                stdout_b, stderr_b = await proc.communicate()
-
-            duration_ms = (time.perf_counter() - start) * 1000.0
-            stdout = stdout_b.decode("utf-8", errors="replace")
-            stderr = stderr_b.decode("utf-8", errors="replace")
-            if len(stdout) > self.action_config.max_output_chars:
-                stdout = stdout[: self.action_config.max_output_chars] + "\n... (truncated)"
-            if len(stderr) > self.action_config.max_output_chars:
-                stderr = stderr[: self.action_config.max_output_chars] + "\n... (truncated)"
-
-            return {
-                "argv": argv,
-                "cwd": str(cwd),
-                "exit_code": proc.returncode,
-                "timed_out": timed_out,
-                "duration_ms": duration_ms,
-                "stdout": stdout,
-                "stderr": stderr,
-            }
-
-        def _parse_rg_vimgrep(output: str, max_results: int) -> tuple[list[dict[str, Any]], bool]:
-            results: list[dict[str, Any]] = []
-            truncated = False
-            limit = max_results if max_results > 0 else None
-            for line in output.splitlines():
-                parts = line.split(":", 3)
-                if len(parts) < 4:
-                    continue
-                path_str, line_str, col_str, text = parts
-                try:
-                    line_no = int(line_str)
-                    col_no = int(col_str)
-                except ValueError:
-                    continue
-                results.append({
-                    "path": path_str,
-                    "line": line_no,
-                    "column": col_no,
-                    "text": text,
+        @_tool()
+        async def list_contexts(
+            output: Literal["json", "markdown", "object"] = "json",
+        ) -> str | dict[str, Any]:
+            """List all active context sessions and their status."""
+            items = []
+            for cid, session in self._sessions.items():
+                items.append({
+                    "id": cid,
+                    "chars": session.meta.size_chars,
+                    "lines": session.meta.size_lines,
+                    "iterations": session.iterations,
+                    "evidence": len(session.evidence),
                 })
-                if limit is not None and len(results) >= limit:
-                    truncated = True
-                    break
-            return results, truncated
-
-        def _python_rg_search(
-            pattern: str,
-            roots: list[Path],
-            glob: str | None,
-            max_results: int,
-        ) -> tuple[list[dict[str, Any]], bool]:
-            results: list[dict[str, Any]] = []
-            truncated = False
-            limit = max_results if max_results > 0 else None
-            rx = re.compile(pattern)
-            skip_dirs = {".git", ".venv", "node_modules", "dist", "build", "__pycache__", ".mypy_cache", ".pytest_cache"}
-
-            def _iter_files(root: Path) -> Iterable[Path]:
-                if root.is_file():
-                    yield root
-                    return
-                for path in root.rglob("*"):
-                    if path.is_dir():
-                        continue
-                    if any(part in skip_dirs for part in path.parts):
-                        continue
-                    yield path
-
-            for root in roots:
-                for path in _iter_files(root):
-                    if glob and not fnmatch.fnmatch(path.name, glob):
-                        continue
-                    try:
-                        if path.stat().st_size > self.action_config.max_read_bytes:
-                            continue
-                        text = path.read_text(encoding="utf-8", errors="replace")
-                    except Exception:
-                        continue
-                    for idx, line in enumerate(text.splitlines(), start=1):
-                        match = rx.search(line)
-                        if not match:
-                            continue
-                        results.append({
-                            "path": str(path),
-                            "line": idx,
-                            "column": match.start() + 1,
-                            "text": line,
-                        })
-                        if limit is not None and len(results) >= limit:
-                            truncated = True
-                            return results, truncated
-            return results, truncated
-
-        def _auto_save_memory_pack() -> None:
-            if not self.action_config.enabled or not self._sessions:
-                return
-            payload, _ = _build_memory_pack_payload()
-            out_bytes = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8", errors="replace")
-            if len(out_bytes) > self.action_config.max_write_bytes:
-                return
-            try:
-                p = _scoped_path(
-                    self.action_config.workspace_root,
-                    ".aleph/memory_pack.json",
-                    self.action_config.workspace_mode,
-                )
-            except Exception:
-                return
-            p.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                with open(p, "wb") as f:
-                    f.write(out_bytes)
-            except Exception:
-                return
-            for sess in self._sessions.values():
-                _record_action(sess, note="auto_save_memory_pack", snippet=str(p))
-
-        @_tool()
-        async def run_command(
-            cmd: str,
-            cwd: str | None = None,
-            timeout_seconds: float | None = None,
-            shell: bool = False,
-            confirm: bool = False,
-            output: Literal["json", "markdown", "object"] = "json",
-            context_id: str = "default",
-        ) -> str | dict[str, Any]:
-            err = _require_actions(confirm)
-            if err:
-                return _format_error(err, output=output)
-
-            session = _get_or_create_session(context_id)
-            session.iterations += 1
-
-            workspace_root = self.action_config.workspace_root
-            cwd_path = (
-                _scoped_path(workspace_root, cwd, self.action_config.workspace_mode)
-                if cwd
-                else workspace_root
-            )
-            timeout = timeout_seconds if timeout_seconds is not None else self.action_config.max_cmd_seconds
-
-            if shell:
-                user_shell = os.environ.get("SHELL", "/bin/sh")
-                argv = [user_shell, "-lc", cmd]
-            else:
-                argv = shlex.split(cmd)
-                if not argv:
-                    return _format_error("Empty command", output=output)
-
-            payload = await _run_subprocess(argv=argv, cwd=cwd_path, timeout_seconds=timeout)
-            if session is not None:
-                session.repl._namespace["last_command_result"] = payload
-            _record_action(session, note="run_command", snippet=(payload.get("stdout") or payload.get("stderr") or "")[:200])
-            return _format_payload(payload, output=output)
-
-        @_tool()
-        async def rg_search(
-            pattern: str,
-            paths: list[str] | None = None,
-            glob: str | None = None,
-            max_results: int = 200,
-            load_context_id: str | None = None,
-            confirm: bool = False,
-            output: Literal["json", "markdown", "object"] = "json",
-            context_id: str = "default",
-        ) -> str | dict[str, Any]:
-            """Fast codebase search using ripgrep (rg) with fallback scanning.
-
-            Args:
-                pattern: Regex pattern to search for
-                paths: Optional list of files/dirs (defaults to workspace root)
-                glob: Optional glob filter (e.g. "*.py")
-                max_results: Max matches to return (default: 200)
-                load_context_id: If set, load matches into this context
-                confirm: Required if actions are enabled
-                output: "json", "markdown", or "object"
-                context_id: Session to record evidence in
-            """
-            err = _require_actions(confirm)
-            if err:
-                return _format_error(err, output=output)
-            if not pattern:
-                return _format_error("pattern is required", output=output)
-
-            session = _get_or_create_session(context_id)
-            session.iterations += 1
-
-            workspace_root = self.action_config.workspace_root
-            resolved_paths: list[Path] = []
-            for p in paths or [str(workspace_root)]:
-                try:
-                    resolved_paths.append(
-                        _scoped_path(
-                            workspace_root,
-                            p,
-                            self.action_config.workspace_mode,
-                        )
-                    )
-                except Exception as e:
-                    return _format_error(str(e), output=output)
-
-            matches: list[dict[str, Any]] = []
-            truncated = False
-            used_rg = False
-            payload: dict[str, Any] | None = None
-
-            rg_bin = shutil.which("rg")
-            if rg_bin:
-                used_rg = True
-                argv = [rg_bin, "--vimgrep", pattern]
-                if glob:
-                    argv.extend(["-g", glob])
-                if max_results > 0:
-                    argv.extend(["-m", str(max_results)])
-                argv.extend(str(p) for p in resolved_paths)
-                payload = await _run_subprocess(argv=argv, cwd=workspace_root, timeout_seconds=self.action_config.max_cmd_seconds)
-                matches, truncated = _parse_rg_vimgrep(payload.get("stdout") or "", max_results)
-            else:
-                matches, truncated = _python_rg_search(pattern, resolved_paths, glob, max_results)
-
-            hits_text = "\n".join(
-                f"{m['path']}:{m['line']}:{m['column']}:{m['text']}" for m in matches
-            )
-            if load_context_id:
-                meta = _create_session(hits_text, load_context_id, ContentFormat.TEXT, DEFAULT_LINE_NUMBER_BASE)
-                session.repl._namespace["last_rg_loaded_context"] = load_context_id
-                load_note = f"Loaded {len(matches)} match(es) into '{load_context_id}'."
-            else:
-                meta = None
-                load_note = None
-
-            result_payload = {
-                "pattern": pattern,
-                "paths": [str(p) for p in resolved_paths],
-                "used_rg": used_rg,
-                "match_count": len(matches),
-                "truncated": truncated,
-                "matches": matches,
-            }
-            if payload:
-                result_payload["command"] = payload.get("argv")
-                result_payload["timed_out"] = payload.get("timed_out", False)
-                result_payload["stderr"] = payload.get("stderr", "")
-            if load_context_id:
-                result_payload["loaded_context_id"] = load_context_id
-                result_payload["loaded_meta"] = {
-                    "size_chars": meta.size_chars if meta else 0,
-                    "size_lines": meta.size_lines if meta else 0,
-                }
-                if load_note:
-                    result_payload["note"] = load_note
-
-            session.repl._namespace["last_rg_result"] = result_payload
-            _record_action(session, note="rg_search", snippet=f"{pattern} ({len(matches)} matches)")
 
             if output == "object":
-                return result_payload
+                return {"count": len(items), "items": items}
             if output == "json":
-                return json.dumps(result_payload, ensure_ascii=False, indent=2)
+                return json.dumps({"count": len(items), "items": items}, indent=2)
 
-            parts = [
-                "## rg_search Results",
-                f"Pattern: `{pattern}`",
-                f"Matches: {len(matches)}" + (" (truncated)" if truncated else ""),
-            ]
-            if load_note:
-                parts.append(load_note)
-            if matches:
-                parts.append("")
-                parts.extend([f"- {m['path']}:{m['line']}:{m['column']}: {m['text']}" for m in matches[:20]])
-                if len(matches) > 20:
-                    parts.append(f"... {len(matches) - 20} more")
-            return "\n".join(parts)
+            res = [f"Found {len(items)} active context session(s):\n"]
+            for item in items:
+                res.append(f"- **{item['id']}**: {item['chars']:,} chars, {item['lines']:,} lines, {item['iterations']} iterations")
+            return "\n".join(res)
 
         @_tool()
-        async def read_file(
-            path: str,
-            start_line: int = 1,
-            limit: int = 200,
-            include_raw: bool = False,
-            line_number_base: int | None = None,
-            confirm: bool = False,
-            output: Literal["json", "markdown", "object"] = "json",
-            context_id: str = "default",
-        ) -> str | dict[str, Any]:
-            err = _require_actions(confirm)
-            if err:
-                return _format_error(err, output=output)
-
-            base_override: LineNumberBase | None = None
-            if line_number_base is not None:
-                try:
-                    base_override = _validate_line_number_base(line_number_base)
-                except ValueError as e:
-                    return _format_error(str(e), output=output)
-
-            session = _get_or_create_session(context_id, line_number_base=base_override)
-            session.iterations += 1
-            try:
-                base = _resolve_line_number_base(session, line_number_base)
-            except ValueError as e:
-                return _format_error(str(e), output=output)
-
-            if base == 1 and start_line == 0:
-                start_line = 1
-            if start_line < base:
-                return _format_error(f"start_line must be >= {base}", output=output)
-
-            try:
-                p = _scoped_path(
-                    self.action_config.workspace_root,
-                    path,
-                    self.action_config.workspace_mode,
-                )
-            except Exception as e:
-                return _format_error(str(e), output=output)
-
-            if not p.exists() or not p.is_file():
-                return _format_error(f"File not found: {path}", output=output)
-
-            data = p.read_bytes()
-            if len(data) > self.action_config.max_read_bytes:
-                return _format_error(
-                    f"File too large to read (>{self.action_config.max_read_bytes} bytes): {path}",
-                    output=output,
-                )
-
-            text = data.decode("utf-8", errors="replace")
-            lines = text.splitlines()
-            start_idx = max(0, start_line - base)
-            end_idx = min(len(lines), start_idx + max(0, limit))
-            slice_lines = lines[start_idx:end_idx]
-            numbered = "\n".join(
-                f"{i + start_idx + base:>6}\t{line}" for i, line in enumerate(slice_lines)
-            )
-            end_line = (start_idx + len(slice_lines) - 1 + base) if slice_lines else start_line
-
-            payload: dict[str, Any] = {
-                "path": str(p),
-                "start_line": start_line,
-                "end_line": end_line,
-                "limit": limit,
-                "total_lines": len(lines),
-                "line_number_base": base,
-                "content": numbered,
-            }
-            if include_raw:
-                payload["content_raw"] = "\n".join(slice_lines)
-            if session is not None:
-                session.repl._namespace["last_read_file_result"] = payload
-            _record_action(session, note="read_file", snippet=f"{path} ({start_line}-{end_line})")
-            return _format_payload(payload, output=output)
-
-        @_tool()
-        async def load_file(
-            path: str,
-            context_id: str = "default",
-            format: str = "auto",
-            line_number_base: LineNumberBase = DEFAULT_LINE_NUMBER_BASE,
-            confirm: bool = False,
+        async def diff_contexts(
+            a: str,
+            b: str,
+            context_lines: int = 3,
+            max_lines: int = 400,
+            output: Literal["markdown", "text"] = "markdown",
         ) -> str:
-            """Load a workspace file into a context session.
+            """Compare two context sessions using unified diff."""
+            if a not in self._sessions:
+                return f"Error: Context '{a}' not found."
+            if b not in self._sessions:
+                return f"Error: Context '{b}' not found."
 
-            Args:
-                path: File path to read (relative to workspace root)
-                context_id: Identifier for this context session (default: "default")
-                format: Content format - "auto", "text", or "json" (default: "auto")
-                line_number_base: Line number base for this context (0 or 1)
-                confirm: Required if actions are enabled
+            lines_a = str(self._sessions[a].repl.get_variable("ctx") or "").splitlines()
+            lines_b = str(self._sessions[b].repl.get_variable("ctx") or "").splitlines()
 
-            Returns:
-                Confirmation with context metadata
-            """
-            err = _require_actions(confirm)
-            if err:
-                return f"Error: {err}"
+            diff = list(difflib.unified_diff(
+                lines_a, lines_b,
+                fromfile=f"context:{a}",
+                tofile=f"context:{b}",
+                n=context_lines,
+                lineterm=""
+            ))
 
-            try:
-                base = _validate_line_number_base(line_number_base)
-            except ValueError as e:
-                return f"Error: {e}"
+            if not diff:
+                return f"Contexts '{a}' and '{b}' are identical."
 
-            try:
-                p = _scoped_path(
-                    self.action_config.workspace_root,
-                    path,
-                    self.action_config.workspace_mode,
-                )
-            except Exception as e:
-                return f"Error: {e}"
+            if len(diff) > max_lines:
+                diff = diff[:max_lines] + ["... (diff truncated)"]
 
-            if not p.exists() or not p.is_file():
-                return f"Error: File not found: {path}"
-
-            try:
-                text, detected_fmt, warning = _load_text_from_path(
-                    p,
-                    max_bytes=self.action_config.max_read_bytes,
-                    timeout_seconds=self.action_config.max_cmd_seconds,
-                )
-            except ValueError as e:
-                return f"Error: {e}"
-            try:
-                fmt = detected_fmt if format == "auto" else ContentFormat(format)
-            except Exception as e:
-                return f"Error: {e}"
-            meta = _create_session(text, context_id, fmt, base)
-            session = self._sessions[context_id]
-            _record_action(session, note="load_file", snippet=str(p))
-            return _format_context_loaded(context_id, meta, base, note=warning)
+            diff_text = "\n".join(diff)
+            if output == "markdown":
+                return f"### Diff: {a} vs {b}\n\n```diff\n{diff_text}\n```"
+            return diff_text
 
         @_tool()
-        async def write_file(
-            path: str,
-            content: str,
-            mode: Literal["overwrite", "append"] = "overwrite",
+        async def save_session(
+            path: str = "aleph_session.json",
+            context_id: str | None = None,
+            session_id: str = "default",
             confirm: bool = False,
             output: Literal["json", "markdown", "object"] = "json",
-            context_id: str = "default",
         ) -> str | dict[str, Any]:
-            err = _require_actions(confirm)
+            """Save session state to a file (Memory Pack)."""
+            err = self._require_actions(confirm)
             if err:
                 return _format_error(err, output=output)
 
-            session = _get_or_create_session(context_id)
-            session.iterations += 1
+            payload, skipped = self._build_memory_pack_payload()
+            try:
+                p = _scoped_path(self.action_config.workspace_root, path, self.action_config.workspace_mode)
+            except Exception as e:
+                return _format_error(f"Invalid path: {e}", output=output)
 
             try:
-                p = _scoped_path(
-                    self.action_config.workspace_root,
-                    path,
-                    self.action_config.workspace_mode,
-                )
+                p.parent.mkdir(parents=True, exist_ok=True)
+                with open(p, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2, ensure_ascii=False)
             except Exception as e:
-                return _format_error(str(e), output=output)
+                return _format_error(f"Failed to save: {e}", output=output)
 
-            payload_bytes = content.encode("utf-8", errors="replace")
-            if len(payload_bytes) > self.action_config.max_write_bytes:
-                return _format_error(
-                    f"Content too large to write (>{self.action_config.max_write_bytes} bytes)",
-                    output=output,
-                )
+            msg = f"Session saved to {path}."
+            if skipped:
+                msg += f" Warning: skipped {len(skipped)} sessions due to serialization errors."
 
-            p.parent.mkdir(parents=True, exist_ok=True)
-            file_mode = "ab" if mode == "append" else "wb"
-            with open(p, file_mode) as f:
-                f.write(payload_bytes)
+            if output == "object":
+                return {"status": "success", "path": str(p), "skipped": skipped}
+            if output == "json":
+                return json.dumps({"status": "success", "path": str(p), "skipped": skipped})
+            return msg
 
-            payload: dict[str, Any] = {
-                "path": str(p),
-                "bytes_written": len(payload_bytes),
-                "mode": mode,
-            }
-            if session is not None:
-                session.repl._namespace["last_write_file_result"] = payload
-            _record_action(session, note="write_file", snippet=f"{path} ({len(payload_bytes)} bytes)")
-            return _format_payload(payload, output=output)
+        @_tool()
+        async def load_session(
+            path: str,
+            context_id: str | None = None,
+            session_id: str | None = None,
+            confirm: bool = False,
+            output: Literal["json", "markdown", "object"] = "json",
+        ) -> str | dict[str, Any]:
+            """Load session state from a file (Memory Pack)."""
+            err = self._require_actions(confirm)
+            if err:
+                return _format_error(err, output=output)
+
+            try:
+                p = _scoped_path(self.action_config.workspace_root, path, self.action_config.workspace_mode)
+                with open(p, "r", encoding="utf-8") as f:
+                    payload = json.load(f)
+            except Exception as e:
+                return _format_error(f"Failed to load: {e}", output=output)
+
+            if payload.get("schema") != "aleph.memory_pack.v1":
+                return _format_error("Invalid memory pack schema", output=output)
+
+            loaded = []
+            for sp in payload.get("sessions", []):
+                sid = sp.get("id")
+                if sid:
+                    try:
+                        self._sessions[sid] = _session_from_payload(sp, sid, self.sandbox_config, asyncio.get_running_loop())
+                        self._configure_session(self._sessions[sid], sid, loop=asyncio.get_running_loop())
+                        loaded.append(sid)
+                    except Exception:
+                        pass
+
+            msg = f"Loaded {len(loaded)} session(s) from {path}."
+            if output == "object":
+                return {"status": "success", "loaded": loaded}
+            if output == "json":
+                return json.dumps({"status": "success", "loaded": loaded})
+            return msg
+
+    def _register_action_tools(self) -> None:
+        _tool = self._tool_decorator
 
         @_tool()
         async def run_tests(
@@ -2205,480 +2024,110 @@ class AlephMCPServerLocal:
             output: Literal["json", "markdown", "object"] = "json",
             context_id: str = "default",
         ) -> str | dict[str, Any]:
-            err = _require_actions(confirm)
+            """Run project tests."""
+            err = self._require_actions(confirm)
             if err:
                 return _format_error(err, output=output)
 
-            session = _get_or_create_session(context_id)
+            session = self._get_or_create_session(context_id)
             session.iterations += 1
 
-            runner_resolved = "pytest" if runner == "auto" else runner
-            if runner_resolved != "pytest":
-                return _format_error(f"Unsupported test runner: {runner_resolved}", output=output)
+            workspace_root = self.action_config.workspace_root
+            cwd_path = (
+                _scoped_path(workspace_root, cwd, self.action_config.workspace_mode)
+                if cwd
+                else workspace_root
+            )
 
-            argv = [sys.executable, "-m", "pytest", "-vv", "--tb=short", "--maxfail=20"]
+            # Heuristics for test runner
+            runner_bin: str = str(runner)
+            if runner == "auto":
+                runner_bin = "pytest"
+
+            argv: list[str] = [runner_bin]
             if args:
                 argv.extend(args)
 
-            cwd_path = self.action_config.workspace_root
-            if cwd:
-                try:
-                    cwd_path = _scoped_path(
-                        self.action_config.workspace_root,
-                        cwd,
-                        self.action_config.workspace_mode,
-                    )
-                except Exception as e:
-                    return _format_error(str(e), output=output)
-
-            proc_payload = await _run_subprocess(
-                argv=argv,
-                cwd=cwd_path,
-                timeout_seconds=self.action_config.max_cmd_seconds,
-            )
-            stdout = str(proc_payload.get("stdout") or "")
-            stderr = str(proc_payload.get("stderr") or "")
-            raw_output = stdout + ("\n" + stderr if stderr else "")
-
-            passed = 0
-            failed = 0
-            errors = 0
-            duration_ms = float(proc_payload.get("duration_ms") or 0.0)
-            exit_code = int(proc_payload.get("exit_code") or 0)
-
-            m_passed = re.search(r"(\\d+)\\s+passed", raw_output)
-            if m_passed:
-                passed = int(m_passed.group(1))
-            m_failed = re.search(r"(\\d+)\\s+failed", raw_output)
-            if m_failed:
-                failed = int(m_failed.group(1))
-            m_errors = re.search(r"(\\d+)\\s+errors?", raw_output)
-            if m_errors:
-                errors = int(m_errors.group(1))
-
-            failures: list[dict[str, Any]] = []
-            section_re = re.compile(r"^_{3,}\\s+(?P<name>.+?)\\s+_{3,}\\s*$", re.MULTILINE)
-            matches = list(section_re.finditer(raw_output))
-            for i, sm in enumerate(matches):
-                start = sm.end()
-                end = matches[i + 1].start() if i + 1 < len(matches) else len(raw_output)
-                block = raw_output[start:end].strip()
-                file = ""
-                line = 0
-                file_line = re.search(r"^(?P<file>.+?\\.py):(?P<line>\\d+):", block, re.MULTILINE)
-                if file_line:
-                    file = file_line.group("file")
-                    try:
-                        line = int(file_line.group("line"))
-                    except Exception:
-                        line = 0
-                msg = ""
-                err_line = re.search(r"^E\\s+(.+)$", block, re.MULTILINE)
-                if err_line:
-                    msg = err_line.group(1).strip()
-
-                failures.append(
-                    {
-                        "file": file,
-                        "line": line,
-                        "test_name": sm.group("name").strip(),
-                        "message": msg,
-                        "traceback": block,
-                    }
-                )
-
-            if exit_code != 0 and failed == 0 and errors == 0:
-                errors = 1
-
-            status = "passed"
-            if exit_code != 0:
-                status = "failed" if failed > 0 else "error"
-
-            result: dict[str, Any] = {
-                "passed": passed,
-                "failed": failed,
-                "errors": errors,
-                "failures": failures,
-                "status": status,
-                "duration_ms": duration_ms,
-                "exit_code": exit_code,
-                "raw_output": raw_output,
-                "command": proc_payload,
-            }
-
-            if session is not None:
-                session.repl._namespace["last_test_result"] = result
-
-            summary_snippet = (
-                f"status={status} passed={passed} failed={failed} errors={errors} "
-                f"failures={len(failures)} exit_code={exit_code}"
-            )
-            _record_action(session, note="run_tests", snippet=summary_snippet)
-            for f in failures[:10]:
-                _record_action(session, note="test_failure", snippet=(f.get("message") or f.get("test_name") or "")[:200])
-
-            return _format_payload(result, output=output)
-
-        @_tool()
-        async def list_contexts(
-            output: Literal["json", "markdown", "object"] = "json",
-        ) -> str | dict[str, Any]:
-            items: list[dict[str, Any]] = []
-            for cid, session in self._sessions.items():
-                items.append(
-                    {
-                        "context_id": cid,
-                        "created_at": session.created_at.isoformat(),
-                        "iterations": session.iterations,
-                        "format": session.meta.format.value,
-                        "size_chars": session.meta.size_chars,
-                        "size_lines": session.meta.size_lines,
-                        "estimated_tokens": session.meta.size_tokens_estimate,
-                        "line_number_base": session.line_number_base,
-                        "evidence_count": len(session.evidence),
-                    }
-                )
-
-            payload: dict[str, Any] = {
-                "count": len(items),
-                "items": sorted(items, key=lambda x: x["context_id"]),
-            }
+            payload = await self._run_subprocess(argv=argv, cwd=cwd_path, timeout_seconds=self.action_config.max_cmd_seconds)
+            self._record_action(session, note=f"run_tests: {runner}", snippet=(payload.get("stdout") or payload.get("stderr") or "")[:200])
             return _format_payload(payload, output=output)
 
-        @_tool()
-        async def diff_contexts(
-            a: str,
-            b: str,
-            context_lines: int = 3,
-            max_lines: int = 400,
-            output: Literal["markdown", "text"] = "markdown",
-        ) -> str:
-            if a not in self._sessions:
-                return f"Error: No context loaded with ID '{a}'. Use load_context first."
-            if b not in self._sessions:
-                return f"Error: No context loaded with ID '{b}'. Use load_context first."
+    def _format_execution_result(self, result: ExecutionResult) -> str | dict[str, Any]:
+        """Format sandboxed execution results for output."""
+        if result.error:
+            return f"## Execution Error\n\n{result.error}"
 
-            sa = self._sessions[a]
-            sb = self._sessions[b]
-            sa.iterations += 1
-            sb.iterations += 1
+        res = ["## Execution Result\n"]
+        if result.stdout:
+            res.append(f"**Output:**\n```\n{result.stdout}\n```")
+        if result.stderr:
+            res.append(f"**Stderr:**\n```\n{result.stderr}\n```")
+        if result.return_value is not None:
+            res.append(f"**Return Value:** `{result.return_value!r}`")
+        if result.variables_updated:
+            res.append(f"\n**Variables Updated:** {', '.join(f'`{v}`' for v in result.variables_updated)}")
 
-            a_ctx = sa.repl.get_variable("ctx")
-            b_ctx = sb.repl.get_variable("ctx")
-            if not isinstance(a_ctx, str) or not isinstance(b_ctx, str):
-                return "Error: diff_contexts currently supports only text contexts"
+        if result.truncated:
+            res.append("\n*Note: Output was truncated*")
 
-            a_lines = a_ctx.splitlines(keepends=True)
-            b_lines = b_ctx.splitlines(keepends=True)
-            diff_iter = difflib.unified_diff(
-                a_lines,
-                b_lines,
-                fromfile=a,
-                tofile=b,
-                n=max(0, context_lines),
-            )
-            diff_lines = list(diff_iter)
-            truncated = False
-            if len(diff_lines) > max(0, max_lines):
-                diff_lines = diff_lines[: max(0, max_lines)]
-                truncated = True
+        return "\n".join(res)
 
-            diff_text = "".join(diff_lines)
-            if truncated:
-                diff_text += "\n... (truncated)"
-
-            _record_action(sa, note="diff_contexts", snippet=f"{a} vs {b}")
-            _record_action(sb, note="diff_contexts", snippet=f"{a} vs {b}")
-
-            if output == "text":
-                return diff_text
-            return f"```diff\n{diff_text}\n```"
-
-        @_tool()
-        async def save_session(
-            session_id: str = "default",
-            context_id: str | None = None,
-            path: str = "aleph_session.json",
-            confirm: bool = False,
-            output: Literal["json", "markdown", "object"] = "json",
-        ) -> str | dict[str, Any]:
-            """Save a session to disk.
-
-            Use context_id="*" or session_id="*" to save all sessions as a memory pack.
-            """
-            err = _require_actions(confirm)
-            if err:
-                return _format_error(err, output=output)
-
-            target_id = context_id or session_id
-            if target_id in {"*", "all"}:
-                payload, skipped = _build_memory_pack_payload()
-                pack_path = path if path != "aleph_session.json" else ".aleph/memory_pack.json"
-                out_bytes = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8", errors="replace")
-                if len(out_bytes) > self.action_config.max_write_bytes:
-                    return _format_error(
-                        f"Session file too large to write (>{self.action_config.max_write_bytes} bytes)",
-                        output=output,
-                    )
-                try:
-                    p = _scoped_path(
-                        self.action_config.workspace_root,
-                        pack_path,
-                        self.action_config.workspace_mode,
-                    )
-                except Exception as e:
-                    return _format_error(str(e), output=output)
-
-                p.parent.mkdir(parents=True, exist_ok=True)
-                with open(p, "wb") as f:
-                    f.write(out_bytes)
-
-                for sess in self._sessions.values():
-                    _record_action(sess, note="save_memory_pack", snippet=str(p))
-
-                payload_out = {"path": str(p), "bytes_written": len(out_bytes), "sessions": len(payload["sessions"])}
-                if skipped:
-                    payload_out["skipped"] = skipped
-                return _format_payload(payload_out, output=output)
-
-            if target_id not in self._sessions:
-                return _format_error(f"No context loaded with ID '{target_id}'. Use load_context first.", output=output)
-
-            session = self._sessions[target_id]
-            session.iterations += 1
-
-            payload = _session_to_payload(target_id, session)
-            out_bytes = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8", errors="replace")
-            if len(out_bytes) > self.action_config.max_write_bytes:
-                return _format_error(
-                    f"Session file too large to write (>{self.action_config.max_write_bytes} bytes)",
-                    output=output,
-                )
-
-            try:
-                p = _scoped_path(
-                    self.action_config.workspace_root,
-                    path,
-                    self.action_config.workspace_mode,
-                )
-            except Exception as e:
-                return _format_error(str(e), output=output)
-
-            p.parent.mkdir(parents=True, exist_ok=True)
-            with open(p, "wb") as f:
-                f.write(out_bytes)
-
-            _record_action(session, note="save_session", snippet=str(p))
-            return _format_payload({"path": str(p), "bytes_written": len(out_bytes)}, output=output)
-
-        @_tool()
-        async def load_session(
-            path: str,
-            session_id: str | None = None,
-            context_id: str | None = None,
-            confirm: bool = False,
-            output: Literal["json", "markdown", "object"] = "json",
-        ) -> str | dict[str, Any]:
-            """Load a session from disk (supports memory packs)."""
-            err = _require_actions(confirm)
-            if err:
-                return _format_error(err, output=output)
-
-            try:
-                p = _scoped_path(
-                    self.action_config.workspace_root,
-                    path,
-                    self.action_config.workspace_mode,
-                )
-            except Exception as e:
-                return _format_error(str(e), output=output)
-
-            if not p.exists() or not p.is_file():
-                return _format_error(f"File not found: {path}", output=output)
-
-            data = p.read_bytes()
-            if len(data) > self.action_config.max_read_bytes:
-                return _format_error(
-                    f"Session file too large to read (>{self.action_config.max_read_bytes} bytes): {path}",
-                    output=output,
-                )
-
-            try:
-                obj = json.loads(data.decode("utf-8", errors="replace"))
-            except Exception as e:
-                return _format_error(f"Failed to parse JSON: {e}", output=output)
-
-            if not isinstance(obj, dict):
-                return _format_error("Invalid session file format", output=output)
-
-            schema = obj.get("schema")
-            if schema == "aleph.memory_pack.v1":
-                sessions = obj.get("sessions")
-                if not isinstance(sessions, list):
-                    return _format_error("Invalid memory pack format", output=output)
-                loaded: list[str] = []
-                skipped_existing: list[str] = []
-                skipped_invalid = 0
-                for payload in sessions:
-                    if not isinstance(payload, dict):
-                        skipped_invalid += 1
-                        continue
-                    file_session_id = payload.get("context_id") or payload.get("session_id")
-                    resolved_id = str(file_session_id) if file_session_id else f"session_{len(self._sessions) + 1}"
-                    if resolved_id in self._sessions:
-                        skipped_existing.append(resolved_id)
-                        continue
-                    try:
-                        session = _session_from_payload(
-                            payload,
-                            resolved_id,
-                            self.sandbox_config,
-                            loop=asyncio.get_running_loop(),
-                        )
-                    except Exception:
-                        skipped_invalid += 1
-                        continue
-                    self._configure_session(session, resolved_id, loop=asyncio.get_running_loop())
-                    self._sessions[resolved_id] = session
-                    _record_action(session, note="load_memory_pack", snippet=str(p))
-                    loaded.append(resolved_id)
-                return _format_payload(
-                    {
-                        "loaded": loaded,
-                        "skipped_existing": skipped_existing,
-                        "skipped_invalid": skipped_invalid,
-                        "loaded_from": str(p),
-                    },
-                    output=output,
-                )
-
-            file_session_id = obj.get("context_id") or obj.get("session_id")
-            resolved_id = context_id or session_id or (str(file_session_id) if file_session_id else "default")
-            try:
-                session = _session_from_payload(
-                    obj,
-                    resolved_id,
-                    self.sandbox_config,
-                    loop=asyncio.get_running_loop(),
-                )
-            except ValueError as e:
-                return _format_error(str(e), output=output)
-
-            self._configure_session(session, resolved_id, loop=asyncio.get_running_loop())
-            self._sessions[resolved_id] = session
-            _record_action(session, note="load_session", snippet=str(p))
-            return _format_payload(
-                {
-                    "context_id": resolved_id,
-                    "session_id": resolved_id,
-                    "line_number_base": session.line_number_base,
-                    "loaded_from": str(p),
-                },
-                output=output,
-            )
+    def _register_query_tools(self) -> None:
+        _tool = self._tool_decorator
 
         @_tool()
         async def peek_context(
             start: int = 0,
             end: int | None = None,
-            context_id: str = "default",
             unit: Literal["chars", "lines"] = "chars",
-            record_evidence: bool = True,
+            record_evidence: bool = False,
+            context_id: str = "default",
         ) -> str:
-            """View a portion of the loaded context.
-
-            Args:
-                start: Starting position (chars are 0-indexed; lines use the session line number base)
-                end: Ending position (chars: exclusive; lines: inclusive, None = to the end)
-                context_id: Context identifier
-                unit: "chars" for character slicing, "lines" for line slicing
-                record_evidence: Store evidence entry for this peek
-
-            Returns:
-                The requested portion of the context
-            """
+            """View a portion of the loaded context."""
             if context_id not in self._sessions:
-                return f"Error: No context loaded with ID '{context_id}'. Use load_context first."
+                return f"Error: No context loaded with ID '{context_id}'."
 
             session = self._sessions[context_id]
             repl = session.repl
             session.iterations += 1
 
-            if unit == "chars":
-                fn = repl.get_variable("peek")
-                if not callable(fn):
-                    return "Error: peek() helper is not available"
-                result = fn(start, end)
-            else:
-                fn = repl.get_variable("lines")
-                if not callable(fn):
-                    return "Error: lines() helper is not available"
-                base = session.line_number_base
-                if base == 1 and start == 0:
-                    start = 1
-                if end == 0 and base == 1:
-                    end = 1
-                if start < base:
-                    return f"Error: start must be >= {base} for line-based peeks"
-                if end is not None and end < start:
-                    return "Error: end must be >= start"
-                start_idx = start - base
-                end_idx = None if end is None else end - base + 1
-                result = fn(start_idx, end_idx)
+            fn = repl.get_variable("peek") if unit == "chars" else repl.get_variable("lines")
+            if not callable(fn):
+                return f"Error: {unit} helper is not available"
 
-            # Track evidence for provenance
-            evidence_before = len(session.evidence)
-            if record_evidence and result:
+            try:
+                res = fn(start, end)
+            except Exception as e:
+                return f"Error: {e}"
+
+            if record_evidence and res:
+                line_range = None
                 if unit == "lines":
-                    lines_count = result.count("\n") + 1 if result else 0
-                    end_line = start + max(0, lines_count - 1)
-                    session.evidence.append(
-                        _Evidence(
-                            source="peek",
-                            line_range=(start, end_line),
-                            pattern=None,
-                            note=None,
-                            snippet=result[:200],
-                        )
+                    line_range = (start, end if end is not None else session.meta.size_lines)
+                session.evidence.append(
+                    _Evidence(
+                        source="peek",
+                        line_range=line_range,
+                        pattern=None,
+                        note=f"peek {unit} {start}:{end}",
+                        snippet=str(res)[:200],
                     )
-                else:
-                    session.evidence.append(
-                        _Evidence(
-                            source="peek",
-                            line_range=None,  # Character ranges don't map to lines easily
-                            pattern=None,
-                            note=None,
-                            snippet=result[:200],
-                        )
-                    )
-            session.information_gain.append(len(session.evidence) - evidence_before)
+                )
 
-            return f"```\n{result}\n```"
+            return str(res)
 
         @_tool()
         async def search_context(
             pattern: str,
             context_id: str = "default",
-            max_results: int = 10,
             context_lines: int = 2,
+            max_results: int = 10,
             record_evidence: bool = True,
             evidence_mode: Literal["summary", "all"] = "summary",
         ) -> str:
-            """Search the context using regex patterns.
-
-            Args:
-                pattern: Regular expression pattern to search for
-                context_id: Context identifier
-                max_results: Maximum number of matches to return
-                context_lines: Number of surrounding lines to include
-                record_evidence: Store evidence entries for this search
-                evidence_mode: "summary" records one entry, "all" records every match
-
-            Returns:
-                Matching lines with surrounding context
-            """
+            """Search the context using regex patterns."""
             if context_id not in self._sessions:
-                return f"Error: No context loaded with ID '{context_id}'. Use load_context first."
+                return f"Error: No context loaded with ID '{context_id}'."
 
             session = self._sessions[context_id]
             repl = session.repl
@@ -2690,72 +2139,47 @@ class AlephMCPServerLocal:
 
             try:
                 results = fn(pattern, context_lines=context_lines, max_results=max_results)
-            except re.error as e:
-                return f"Error: Invalid regex pattern `{pattern}`: {e}"
+            except Exception as e:
+                return f"Error: {e}"
 
-            if not results:
-                return f"No matches found for pattern: `{pattern}`"
+            if not isinstance(results, list):
+                return f"Error: search() returned unexpected type {type(results)}"
 
-            base = session.line_number_base
-            total_lines = session.meta.size_lines
-            max_line = total_lines if base == 1 else max(0, total_lines - 1)
-
-            def _line_range_for(match_line: int) -> tuple[int, int]:
-                if base == 1:
-                    start = max(1, match_line - context_lines)
-                    end = min(max_line, match_line + context_lines)
-                else:
-                    start = max(0, match_line - context_lines)
-                    end = min(max_line, match_line + context_lines)
-                return start, end
-
-            # Track evidence for provenance
-            evidence_before = len(session.evidence)
-            out: list[str] = []
-            ranges: list[tuple[int, int]] = []
-            for r in results:
-                try:
-                    display_line = r["line_num"]
-                    line_range = _line_range_for(display_line)
-                    ranges.append(line_range)
-                    out.append(f"**Line {display_line}:**\n```\n{r['context']}\n```")
-                except Exception:
-                    out.append(str(r))
-
-            if record_evidence:
-                if evidence_mode == "all":
-                    for r, line_range in zip(results, ranges):
-                        session.evidence.append(
-                            _Evidence(
-                                source="search",
-                                line_range=line_range,
-                                pattern=pattern,
-                                note=None,
-                                snippet=r.get("match", "")[:200],
-                            )
-                        )
-                else:
-                    start = min(r[0] for r in ranges)
-                    end = max(r[1] for r in ranges)
+            if record_evidence and results:
+                if evidence_mode == "summary":
                     session.evidence.append(
                         _Evidence(
                             source="search",
-                            line_range=(start, end),
+                            line_range=None,
                             pattern=pattern,
                             note=f"{len(results)} match(es) (summary)",
-                            snippet=results[0].get("match", "")[:200],
+                            snippet=str(results[0].get("match", ""))[:200] if results else "",
                         )
                     )
+                else:
+                    for r in results:
+                        if isinstance(r, dict):
+                            line_no = int(r.get("line_num", 0))
+                            session.evidence.append(
+                                _Evidence(
+                                    source="search",
+                                    line_range=(line_no, line_no),
+                                    pattern=pattern,
+                                    note="match",
+                                    snippet=str(r.get("match", ""))[:200],
+                                )
+                            )
 
-            # Track information gain
-            session.information_gain.append(len(session.evidence) - evidence_before)
+            if not results:
+                return f"No matches found for `{pattern}`."
 
-            line_desc = "1-based" if base == 1 else "0-based"
-            return (
-                f"## Search Results for `{pattern}`\n\n"
-                f"Found {len(results)} match(es) (line numbers are {line_desc}):\n\n"
-                + "\n\n---\n\n".join(out)
-            )
+            res = [f"## Search Results for `{pattern}`\n"]
+            res.append(f"Found {len(results)} match(es) (line numbers are {session.line_number_base}-based):\n")
+            for r in results:
+                if isinstance(r, dict):
+                    res.append(f"**Line {r.get('line_num')}:**")
+                    res.append(f"```\n{r.get('context')}\n```")
+            return "\n".join(res)
 
         @_tool()
         async def semantic_search(
@@ -2768,20 +2192,9 @@ class AlephMCPServerLocal:
             record_evidence: bool = True,
             output: Literal["markdown", "json", "object"] = "markdown",
         ) -> str | dict[str, Any]:
-            """Semantic search over the context using lightweight embeddings.
-
-            Args:
-                query: Semantic query
-                context_id: Context identifier
-                chunk_size: Characters per chunk (default: 1000)
-                overlap: Overlap between chunks (default: 100)
-                top_k: Number of results to return (default: 5)
-                embed_dim: Embedding dimensions (default: 256)
-                record_evidence: Store evidence entry for this search
-                output: "markdown", "json", or "object"
-            """
+            """Semantic search over the context using lightweight embeddings."""
             if context_id not in self._sessions:
-                return f"Error: No context loaded with ID '{context_id}'. Use load_context first."
+                return f"Error: No context loaded with ID '{context_id}'."
 
             session = self._sessions[context_id]
             repl = session.repl
@@ -2802,169 +2215,71 @@ class AlephMCPServerLocal:
             except Exception as e:
                 return f"Error: {e}"
 
-            evidence_before = len(session.evidence)
+            if not isinstance(results, list):
+                return f"Error: semantic_search() returned unexpected type {type(results)}"
+
             if record_evidence and results:
                 session.evidence.append(
                     _Evidence(
                         source="search",
                         line_range=None,
-                        pattern=query,
-                        note="semantic_search",
-                        snippet=str(results[0].get("preview") or "")[:200],
+                        pattern=None,
+                        note=f"semantic search: {query}",
+                        snippet=str(results[0].get("text", ""))[:200] if results else "",
                     )
                 )
-            session.information_gain.append(len(session.evidence) - evidence_before)
-
-            payload = {
-                "context_id": context_id,
-                "query": query,
-                "count": len(results),
-                "results": results,
-            }
-
-            session.repl._namespace["last_semantic_search"] = payload
 
             if output == "object":
-                return payload
+                return {"results": results}
             if output == "json":
-                return json.dumps(payload, ensure_ascii=False, indent=2)
+                return json.dumps({"results": results}, indent=2)
 
-            parts = [
-                "## Semantic Search Results",
-                f"Query: `{query}`",
-                f"Matches: {len(results)}",
-            ]
-            if results:
-                parts.append("")
-                for r in results:
-                    parts.append(
-                        f"- Chunk {r['index']} ({r['start_char']}-{r['end_char']}), score {r['score']:.3f}: {r['preview']}"
-                    )
-                parts.append("")
-                parts.append("*Use `peek_context(start, end, unit='chars')` for full chunks.*")
-            return "\n".join(parts)
+            if not results:
+                return f"No semantic matches found for `{query}`."
+
+            res = [f"## Semantic Results for `{query}`\n"]
+            for r in results:
+                if isinstance(r, dict):
+                    score = r.get("score", 0.0)
+                    text = r.get("text", "")
+                    res.append(f"### Score: {score:.4f}")
+                    res.append(f"```\n{text}\n```")
+            return "\n".join(res)
 
         @_tool()
         async def exec_python(
             code: str,
             context_id: str = "default",
-        ) -> str:
-            """Execute Python code in the sandboxed REPL.
-
-            The loaded context is available as the variable `ctx`.
-
-            Available helpers:
-            - peek(start, end): View characters
-            - lines(start, end): View lines
-            - search(pattern, context_lines=2, max_results=20): Regex search
-            - chunk(chunk_size, overlap=0): Split context into chunks
-            - semantic_search(query, chunk_size=1000, overlap=100, top_k=5): Meaning-based search
-            - embed_text(text, dim=256): Lightweight embedding vector
-            - cite(snippet, line_range=None, note=None): Tag evidence for provenance
-            - sub_query(prompt, context_slice=None): Spawn a recursive sub-agent (raw output)
-            - sub_aleph(query, context=None): Run a recursive Aleph call (returns AlephResponse)
-            - sub_query_map(prompts, context_slices=None, limit=None): Batch sub-queries
-            - sub_query_batch(prompt, context_slices, limit=None): One prompt over many slices
-            - sub_query_strict(prompt, context_slice=None, validate_regex=None, max_retries=0): Validate output format
-            - allowed_imports(): List allowed imports in the sandbox
-            - is_import_allowed(name): Check if an import is allowed
-            - blocked_names(): List forbidden builtin names
-
-            Available imports: re, json, csv, math, statistics, collections,
-            itertools, functools, datetime, textwrap, difflib
-
-            Args:
-                code: Python code to execute
-                context_id: Context identifier
-
-            Returns:
-                Execution results (stdout, return value, errors)
-            """
+        ) -> str | dict[str, Any]:
+            """Execute Python code in the sandboxed REPL."""
             if context_id not in self._sessions:
-                return f"Error: No context loaded with ID '{context_id}'. Use load_context first."
+                return f"Error: No context loaded with ID '{context_id}'."
 
             session = self._sessions[context_id]
             repl = session.repl
             session.iterations += 1
-            repl.set_loop(asyncio.get_running_loop())
 
-            # Track evidence count before execution
-            evidence_before = len(session.evidence)
+            try:
+                result = await repl.execute_async(code)
+            except Exception as e:
+                return f"Error: {e}"
 
-            result = await repl.execute_async(code)
-
-            # Collect citations from REPL and convert to evidence
-            if repl._citations:
-                for citation in repl._citations:
-                    session.evidence.append(_Evidence(
-                        source="manual",
-                        line_range=citation["line_range"],
-                        pattern=None,
-                        note=citation["note"],
-                        snippet=citation["snippet"][:200],
-                    ))
-                repl._citations.clear()  # Clear after collecting
-
-            # Track information gain
-            session.information_gain.append(len(session.evidence) - evidence_before)
-
-            parts: list[str] = []
-
-            if result.stdout:
-                parts.append(f"**Output:**\n```\n{result.stdout}\n```")
-
-            if result.return_value is not None:
-                parts.append(f"**Return Value:** `{result.return_value}`")
-
-            if result.variables_updated:
-                parts.append(f"**Variables Updated:** {', '.join(f'`{v}`' for v in result.variables_updated)}")
-
-            if result.stderr:
-                parts.append(f"**Stderr:**\n```\n{result.stderr}\n```")
-
-            if result.error:
-                parts.append(f"**Error:** {result.error}")
-
-            if result.truncated:
-                parts.append("*Note: Output was truncated*")
-
-            if not parts:
-                parts.append("*(No output)*")
-
-            return "## Execution Result\n\n" + "\n\n".join(parts)
+            return self._format_execution_result(result)
 
         @_tool()
         async def get_variable(
             name: str,
             context_id: str = "default",
-        ) -> str:
-            """Retrieve a variable from the REPL namespace.
-
-            Args:
-                name: Variable name to retrieve
-                context_id: Context identifier
-
-            Returns:
-                String representation of the variable's value
-            """
+        ) -> Any:
+            """Retrieve a variable from the REPL namespace."""
             if context_id not in self._sessions:
-                return f"Error: No context loaded with ID '{context_id}'. Use load_context first."
+                return f"Error: No context loaded with ID '{context_id}'."
 
-            repl = self._sessions[context_id].repl
-            # Check if variable exists in namespace (not just if it's None)
-            if name not in repl._namespace:
-                return f"Variable `{name}` not found in namespace."
-            value = repl._namespace[name]
+            session = self._sessions[context_id]
+            return session.repl.get_variable(name)
 
-            # Format nicely for complex types
-            if isinstance(value, (dict, list)):
-                try:
-                    formatted = json.dumps(value, indent=2, ensure_ascii=False)
-                    return f"**`{name}`:**\n```json\n{formatted}\n```"
-                except Exception:
-                    return f"**`{name}`:** `{value}`"
-
-            return f"**`{name}`:** `{value}`"
+    def _register_reasoning_tools(self) -> None:
+        _tool = self._tool_decorator
 
         @_tool()
         async def think(
@@ -2974,342 +2289,173 @@ class AlephMCPServerLocal:
         ) -> str:
             """Structure a reasoning sub-step.
 
-            Use this when you need to break down a complex problem into
-            smaller questions. This tool helps you organize your thinking -
-            YOU provide the reasoning, not an external API.
+            Use this to state your plan, record an observation, or ask a sub-question
+            before taking an action. This helps structure the loop.
 
             Args:
-                question: The sub-question to reason about
-                context_slice: Optional relevant context excerpt
+                question: The reasoning step, observation, or sub-question
+                context_slice: Optional snippet of context relevant to this step
                 context_id: Context identifier
-
-            Returns:
-                A structured prompt for you to reason through
             """
-            if context_id in self._sessions:
-                self._sessions[context_id].iterations += 1
-                self._sessions[context_id].think_history.append(question)
+            if context_id not in self._sessions:
+                return f"Error: No context loaded with ID '{context_id}'."
 
-            parts = [
+            session = self._sessions[context_id]
+            session.iterations += 1
+
+            # Log to internal reasoning trace
+            log_entry = {
+                "iteration": session.iterations,
+                "question": question,
+                "context_slice": context_slice[:200] if context_slice else None,
+                "timestamp": datetime.now().isoformat(),
+            }
+            session.repl._namespace.setdefault("_reasoning_trace", []).append(log_entry)  # type: ignore
+
+            res = [
                 "## Reasoning Step",
                 "",
                 f"**Question:** {question}",
             ]
-
             if context_slice:
-                parts.extend([
-                    "",
-                    "**Relevant Context:**",
-                    "```",
-                    context_slice[:2000],  # Limit context slice
-                    "```",
-                ])
+                res.append(f"\n---\n\n**Relevant Context:**\n```\n{context_slice}\n```")
 
-            parts.extend([
-                "",
-                "---",
-                "",
-                "**Your task:** Reason through this step-by-step. Consider:",
-                "1. What information do you have?",
-                "2. What can you infer?",
-                "3. What's the answer to this sub-question?",
-                "",
-                "*After reasoning, use `exec_python` to verify or `finalize` if done.*",
-            ])
+            res.append("\n---\n\n**Your task:** Reason through this step-by-step. Consider:")
+            res.append("1. What information do you have?")
+            res.append("2. What can you infer?")
+            res.append("3. What's the answer to this sub-question?")
+            res.append("\n*After reasoning, use `exec_python` to verify or `finalize` if done.*")
 
-            return "\n".join(parts)
+            return "\n".join(res)
 
         @_tool()
         async def tasks(
-            action: Literal["add", "list", "update", "done", "remove"] = "list",
-            title: str | None = None,
-            task_id: int | None = None,
-            status: Literal["todo", "doing", "done"] | None = None,
-            note: str | None = None,
+            action: Literal["list", "add", "update", "clear"] = "list",
+            task_id: str | None = None,
+            description: str | None = None,
+            status: Literal["todo", "done", "blocked"] = "todo",
             context_id: str = "default",
-            output: Literal["markdown", "json", "object"] = "markdown",
         ) -> str | dict[str, Any]:
-            """Track tasks tied to a context session."""
-            session = _get_or_create_session(context_id)
+            """Track tasks attached to a context."""
+            if context_id not in self._sessions:
+                return f"Error: No context loaded with ID '{context_id}'."
+
+            session = self._sessions[context_id]
             session.iterations += 1
+            tasks_list: list[dict[str, Any]] = session.repl._namespace.setdefault("_tasks", [])  # type: ignore
 
-            valid_statuses = {"todo", "doing", "done"}
-            now = datetime.now().isoformat()
+            if action == "add" and description:
+                new_id = task_id or f"T{len(tasks_list) + 1}"
+                tasks_list.append({"id": new_id, "description": description, "status": status})
+                return f"Task {new_id} added."
 
-            if action == "add":
-                if not title:
-                    return _format_error("title is required for add", output=output)
-                session.task_counter += 1
-                new_task = {
-                    "id": session.task_counter,
-                    "title": title,
-                    "status": status if status in valid_statuses else "todo",
-                    "note": note,
-                    "created_at": now,
-                    "updated_at": now,
-                }
-                session.tasks.append(new_task)
-            elif action in {"update", "done"}:
-                if task_id is None:
-                    return _format_error("task_id is required for update/done", output=output)
-                task: dict[str, Any] | None = None
-                for t in session.tasks:
-                    if t.get("id") == task_id:
-                        task = t
-                        break
-                if task is None:
-                    return _format_error(f"Task {task_id} not found", output=output)
-                if title is not None:
-                    task["title"] = title
-                if action == "done":
-                    task["status"] = "done"
-                elif status in valid_statuses:
-                    task["status"] = status
-                if note is not None:
-                    task["note"] = note
-                task["updated_at"] = now
-            elif action == "remove":
-                if task_id is None:
-                    return _format_error("task_id is required for remove", output=output)
-                before = len(session.tasks)
-                session.tasks = [t for t in session.tasks if t.get("id") != task_id]
-                if len(session.tasks) == before:
-                    return _format_error(f"Task {task_id} not found", output=output)
+            if action == "update" and task_id:
+                for t in tasks_list:
+                    if t["id"] == task_id:
+                        if description:
+                            t["description"] = description
+                        t["status"] = status
+                        return f"Task {task_id} updated."
+                return f"Error: Task {task_id} not found."
 
-            counts = {
-                "todo": sum(1 for t in session.tasks if t.get("status") == "todo"),
-                "doing": sum(1 for t in session.tasks if t.get("status") == "doing"),
-                "done": sum(1 for t in session.tasks if t.get("status") == "done"),
-            }
-            items = sorted(session.tasks, key=lambda t: int(t.get("id", 0)))
-            payload = {
-                "context_id": context_id,
-                "total": len(session.tasks),
-                "counts": counts,
-                "items": items,
-            }
+            if action == "clear":
+                session.repl._namespace["_tasks"] = []
+                return "All tasks cleared."
 
-            if output == "object":
-                return payload
-            if output == "json":
-                return json.dumps(payload, ensure_ascii=False, indent=2)
+            # Default: list
+            if not tasks_list:
+                return "No tasks tracked for this context."
 
-            parts = [
-                "## Tasks",
-                f"Total: {payload['total']} (todo: {counts['todo']}, doing: {counts['doing']}, done: {counts['done']})",
-            ]
-            if items:
-                parts.append("")
-                for task in items:
-                    note_text = f" — {task['note']}" if task.get("note") else ""
-                    parts.append(f"- [{task.get('status', 'todo')}] #{task.get('id')}: {task.get('title')}{note_text}")
-            return "\n".join(parts)
+            res = ["## Task List\n"]
+            for t in tasks_list:
+                icon = "✅" if t["status"] == "done" else "⏳" if t["status"] == "todo" else "🚫"
+                res.append(f"- {icon} **{t['id']}**: {t['description']}")
+            return "\n".join(res)
 
         @_tool()
         async def get_status(
             context_id: str = "default",
-        ) -> str:
-            """Get current session status.
-
-            Shows loaded context info, iteration count, variables, and history.
-
-            Args:
-                context_id: Context identifier
-
-            Returns:
-                Formatted status report
-            """
+            output: Literal["markdown", "json", "object"] = "markdown",
+        ) -> str | dict[str, Any]:
+            """Session state."""
             if context_id not in self._sessions:
-                return f"No context loaded with ID '{context_id}'. Use load_context to start."
+                return f"Error: No context loaded with ID '{context_id}'."
 
             session = self._sessions[context_id]
-            meta = session.meta
-            repl = session.repl
-
-            # Get all user-defined variables (excluding builtins and helpers)
-            excluded = {
-                "ctx",
-                "peek",
-                "lines",
-                "search",
-                "chunk",
-                "cite",
-                "line_number_base",
-                "allowed_imports",
-                "is_import_allowed",
-                "blocked_names",
-                "__builtins__",
-            }
-            variables = {
-                k: type(v).__name__
-                for k, v in repl._namespace.items()
-                if k not in excluded and not k.startswith("_")
+            tasks_list: list[dict[str, Any]] = session.repl._namespace.get("_tasks", [])  # type: ignore
+            status = {
+                "context_id": context_id,
+                "iterations": session.iterations,
+                "evidence_count": len(session.evidence),
+                "tasks_count": len(tasks_list),
+                "variables": [k for k in session.repl._namespace.keys() if not k.startswith("_")],
+                "size_chars": session.meta.size_chars,
+                "size_lines": session.meta.size_lines,
             }
 
-            parts = [
-                "## Context Status",
-                "",
-                f"**Context ID:** `{context_id}`",
-                f"**Created:** {session.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
-                f"**Iterations:** {session.iterations}",
-                "",
-                "### Context Info",
-                f"- Format: {meta.format.value}",
-                f"- Size: {meta.size_chars:,} characters",
-                f"- Lines: {meta.size_lines:,}",
-                f"- Est. tokens: ~{meta.size_tokens_estimate:,}",
-                f"- Line numbers: {'1-based' if session.line_number_base == 1 else '0-based'}",
-            ]
+            if output == "object":
+                return status
+            if output == "json":
+                return json.dumps(status, indent=2)
 
-            if variables:
-                parts.extend([
-                    "",
-                    "### User Variables",
-                ])
-                for name, vtype in variables.items():
-                    parts.append(f"- `{name}`: {vtype}")
-
-            if session.think_history:
-                parts.extend([
-                    "",
-                    "### Reasoning History",
-                ])
-                for i, q in enumerate(session.think_history[-5:], 1):
-                    parts.append(f"{i}. {q[:100]}{'...' if len(q) > 100 else ''}")
-
-            if session.tasks:
-                counts = {
-                    "todo": sum(1 for t in session.tasks if t.get("status") == "todo"),
-                    "doing": sum(1 for t in session.tasks if t.get("status") == "doing"),
-                    "done": sum(1 for t in session.tasks if t.get("status") == "done"),
-                }
-                parts.extend([
-                    "",
-                    "### Tasks",
-                    f"- Total: {len(session.tasks)} (todo: {counts['todo']}, doing: {counts['doing']}, done: {counts['done']})",
-                ])
-                open_tasks = [t for t in session.tasks if t.get("status") in {"todo", "doing"}][:5]
-                for t in open_tasks:
-                    parts.append(f"- #{t.get('id')}: {t.get('title')} ({t.get('status')})")
-
-            # Convergence metrics
-            parts.extend([
-                "",
-                "### Convergence Metrics",
-                f"- Evidence collected: {len(session.evidence)}",
-            ])
-
-            if session.confidence_history:
-                latest_conf = session.confidence_history[-1]
-                parts.append(f"- Latest confidence: {latest_conf:.1%}")
-                if len(session.confidence_history) >= 2:
-                    trend = session.confidence_history[-1] - session.confidence_history[-2]
-                    trend_str = "↑" if trend > 0 else "↓" if trend < 0 else "→"
-                    parts.append(f"- Confidence trend: {trend_str} ({trend:+.1%})")
-                parts.append(f"- Confidence history: {[f'{c:.0%}' for c in session.confidence_history[-5:]]}")
-
-            if session.information_gain:
-                total_gain = sum(session.information_gain)
-                recent_gain = sum(session.information_gain[-3:]) if len(session.information_gain) >= 3 else total_gain
-                parts.append(f"- Total information gain: {total_gain} evidence pieces")
-                parts.append(f"- Recent gain (last 3): {recent_gain}")
-
-            if session.chunks:
-                parts.append(f"- Chunks mapped: {len(session.chunks)}")
-
-            if session.evidence:
-                parts.extend([
-                    "",
-                    "*Use `get_evidence()` to view citations.*",
-                ])
-
-            return "\n".join(parts)
+            res = [f"## Session Status: {context_id}\n"]
+            res.append(f"- **Iterations**: {session.iterations}")
+            res.append(f"- **Evidence Items**: {len(session.evidence)}")
+            res.append(f"- **Tracked Tasks**: {len(session.repl._namespace.get('_tasks', []))}")  # type: ignore
+            res.append(f"- **User Variables**: {', '.join(status['variables']) or 'None'}")  # type: ignore
+            res.append(f"- **Context Size**: {session.meta.size_chars:,} chars ({session.meta.size_lines:,} lines)")
+            return "\n".join(res)
 
         @_tool()
         async def get_evidence(
-            context_id: str = "default",
             limit: int = 20,
             offset: int = 0,
             source: Literal["any", "search", "peek", "exec", "manual", "action"] = "any",
+            context_id: str = "default",
             output: Literal["markdown", "json", "object"] = "markdown",
         ) -> str | dict[str, Any]:
-            """Retrieve collected evidence/citations for a session.
-
-            Args:
-                context_id: Context identifier
-                limit: Max number of evidence items to return (default: 20)
-                offset: Starting index (default: 0)
-                source: Optional source filter (default: "any")
-                output: "markdown" or "json" (default: "markdown")
-
-            Returns:
-                Evidence list, formatted for inspection or programmatic parsing.
-            """
+            """Retrieve collected evidence/citations for a session."""
             if context_id not in self._sessions:
-                return f"Error: No context loaded with ID '{context_id}'. Use load_context first."
+                return f"Error: No context loaded with ID '{context_id}'."
 
             session = self._sessions[context_id]
-            evidence = session.evidence
+            filtered = session.evidence
             if source != "any":
-                evidence = [e for e in evidence if e.source == source]
+                filtered = [e for e in filtered if e.source == source]
 
-            total = len(evidence)
-            offset = max(0, offset)
-            limit = 20 if limit <= 0 else limit
+            count = len(filtered)
+            window = filtered[offset : offset + limit]
 
-            page = evidence[offset : offset + limit]
+            items = []
+            for ev in window:
+                items.append({
+                    "source": ev.source,
+                    "line_range": ev.line_range,
+                    "pattern": ev.pattern,
+                    "note": ev.note,
+                    "snippet": ev.snippet,
+                })
 
-            if output in {"json", "object"}:
-                payload_items = [
-                    {
-                        "index": offset + i,
-                        "source": ev.source,
-                        "line_range": ev.line_range,
-                        "pattern": ev.pattern,
-                        "note": ev.note,
-                        "snippet": ev.snippet,
-                        "timestamp": ev.timestamp.isoformat(),
-                    }
-                    for i, ev in enumerate(page, 1)
-                ]
-                payload = {
-                    "context_id": context_id,
-                    "total": total,
-                    "line_number_base": session.line_number_base,
-                    "items": payload_items,
-                }
-                if output == "object":
-                    return payload
-                return json.dumps(payload, ensure_ascii=False, indent=2)
+            if output == "object":
+                return {"total": count, "items": items}
+            if output == "json":
+                return json.dumps({"total": count, "items": items}, indent=2)
 
-            parts = [
-                "## Evidence",
-                "",
-                f"**Context ID:** `{context_id}`",
-                f"**Total items:** {total}",
-                f"**Showing:** {len(page)} (offset={offset}, limit={limit})",
-                f"**Line numbers:** {'1-based' if session.line_number_base == 1 else '0-based'}",
-            ]
-            if source != "any":
-                parts.append(f"**Source filter:** `{source}`")
-            parts.append("")
+            if not items:
+                return "No evidence found matching criteria."
 
-            if not page:
-                parts.append("*(No evidence collected yet)*")
-                return "\n".join(parts)
-
-            for i, ev in enumerate(page, offset + 1):
-                source_info = f"[{ev.source}]"
-                if ev.line_range:
-                    source_info += f" lines {ev.line_range[0]}-{ev.line_range[1]}"
-                if ev.pattern:
-                    source_info += f" pattern: `{ev.pattern}`"
-                if ev.note:
-                    source_info += f" note: {ev.note}"
-                snippet = ev.snippet.strip()
-                parts.append(f"{i}. {source_info}: \"{snippet}\"")
-
-            return "\n".join(parts)
+            res = [f"## Evidence Log (Total: {count})\n"]
+            for i, item in enumerate(items, offset + 1):
+                source_info = f"[{item['source']}]"
+                lr = item["line_range"]
+                if isinstance(lr, (list, tuple)) and len(lr) >= 2:
+                    source_info += f" lines {lr[0]}-{lr[1]}"
+                if item["pattern"]:
+                    source_info += f" pattern: `{item['pattern']}`"
+                if item["note"]:
+                    source_info += f" note: {item['note']}"
+                res.append(f"{i}. {source_info}: \"{item['snippet'][:100]}...\"")  # type: ignore
+            return "\n".join(res)
 
         @_tool()
         async def finalize(
@@ -3318,55 +2464,23 @@ class AlephMCPServerLocal:
             reasoning_summary: str | None = None,
             context_id: str = "default",
         ) -> str:
-            """Mark the task complete with your final answer.
-
-            Use this when you have arrived at your final answer after
-            exploring the context and reasoning through the problem.
-
-            Args:
-                answer: Your final answer
-                confidence: How confident you are (high/medium/low)
-                reasoning_summary: Optional brief summary of your reasoning
-                context_id: Context identifier
-
-            Returns:
-                Formatted final answer
-            """
-            parts = [
-                "## Final Answer",
-                "",
-                answer,
-            ]
-
+            """Mark the task complete with your final answer."""
+            parts = ["## Final Answer", "", answer]
             if reasoning_summary:
-                parts.extend([
-                    "",
-                    "---",
-                    "",
-                    f"**Reasoning:** {reasoning_summary}",
-                ])
+                parts.extend(["", "---", "", f"**Reasoning:** {reasoning_summary}"])
 
             if context_id in self._sessions:
                 session = self._sessions[context_id]
-                parts.extend([
-                    "",
-                    f"*Completed after {session.iterations} iterations.*",
-                ])
+                parts.extend(["", f"*Completed after {session.iterations} iterations.*"])
 
             parts.append(f"\n**Confidence:** {confidence}")
 
-            # Add evidence citations if available
             if context_id in self._sessions:
                 session = self._sessions[context_id]
                 if session.evidence:
-                    parts.extend([
-                        "",
-                        "---",
-                        "",
-                        "### Evidence Citations",
-                        f"*Line numbers are {'1-based' if session.line_number_base == 1 else '0-based'}.*",
-                    ])
-                    for i, ev in enumerate(session.evidence[-10:], 1):  # Last 10 pieces of evidence
+                    parts.extend(["", "---", "", "### Evidence Citations"])
+                    parts.append(f"*Line numbers are {'1-based' if session.line_number_base == 1 else '0-based'}.*")
+                    for i, ev in enumerate(session.evidence[-10:], 1):
                         source_info = f"[{ev.source}]"
                         if ev.line_range:
                             source_info += f" lines {ev.line_range[0]}-{ev.line_range[1]}"
@@ -3376,505 +2490,50 @@ class AlephMCPServerLocal:
                             source_info += f" note: {ev.note}"
                         parts.append(f"{i}. {source_info}: \"{ev.snippet[:80]}...\"" if len(ev.snippet) > 80 else f"{i}. {source_info}: \"{ev.snippet}\"")
 
-            _auto_save_memory_pack()
+            self._auto_save_memory_pack()
             return "\n".join(parts)
 
-        # =====================================================================
-        # Sub-query tool (RLM-style recursive reasoning)
-        # =====================================================================
-
-        @_tool()
         async def sub_query(
             prompt: str,
             context_slice: str | None = None,
             context_id: str = "default",
             backend: str = "auto",
             format: Literal["markdown", "raw"] = "markdown",
-            validate_regex: str | None = None,
+            validation_regex: str | None = None,
             max_retries: int | None = None,
             retry_prompt: str | None = None,
         ) -> str:
-            """Run a sub-query using a spawned sub-agent (RLM-style recursive reasoning).
-
-            This enables you to break large problems into chunks and query a sub-agent
-            for each chunk, then aggregate results. The sub-agent runs independently
-            and returns its response. Use validate_regex + retries to enforce output format.
-
-            Backend priority (when backend="auto"):
-            1. codex CLI - if installed
-            2. gemini CLI - if installed
-            3. claude CLI - if installed (deprioritized: hangs in MCP/sandbox contexts)
-            4. API - if ALEPH_SUB_QUERY_API_KEY or OPENAI_API_KEY is set (last resort)
-
-            Configure via environment:
-            - ALEPH_SUB_QUERY_BACKEND: Force specific backend ("api", "claude", "codex", "gemini", "auto")
-            - ALEPH_SUB_QUERY_API_KEY or OPENAI_API_KEY: API credentials
-            - ALEPH_SUB_QUERY_URL or OPENAI_BASE_URL: Custom endpoint for OpenAI-compatible APIs
-            - ALEPH_SUB_QUERY_MODEL: Model name (required)
-            - ALEPH_SUB_QUERY_TIMEOUT: Timeout in seconds for CLI/API sub-queries
-            - ALEPH_SUB_QUERY_SHARE_SESSION: "true"/"false" to share the live MCP session with CLI sub-agents
-            - ALEPH_SUB_QUERY_HTTP_HOST: Host for the streamable HTTP server (default: 127.0.0.1)
-            - ALEPH_SUB_QUERY_HTTP_PORT: Port for the streamable HTTP server (default: 8765)
-            - ALEPH_SUB_QUERY_HTTP_PATH: Path for the streamable HTTP server (default: /mcp)
-            - ALEPH_SUB_QUERY_MCP_SERVER_NAME: MCP server name exposed to sub-agents (default: aleph_shared)
-
-            Args:
-                prompt: The question/task for the sub-agent
-                context_slice: Optional context to include (e.g., a chunk from ctx).
-                    If not provided, automatically uses the context from context_id session.
-                context_id: Session to use. If context_slice is not provided, the session's
-                    loaded context is automatically passed to the sub-agent.
-                backend: "auto", "claude", "codex", "gemini", or "api"
-                format: "markdown" (default) for annotated output, or "raw" for direct sub-agent output
-                validate_regex: Optional regex to validate output format.
-                max_retries: Number of retries after validation failure (default: config/env).
-                retry_prompt: Prompt suffix used when retrying after validation failure.
-
-            Returns:
-                The sub-agent's response
-
-            Example usage in exec_python:
-                chunks = chunk(100000)  # 100k char chunks
-                summaries = []
-                for c in chunks:
-                    result = sub_query("Summarize this section:", context_slice=c)
-                    summaries.append(result)
-                final = sub_query(f"Combine these summaries: {summaries}")
-            """
-            success, output, truncated, resolved_backend = await self._run_sub_query(
+            """Run a sub-query using a spawned sub-agent."""
+            success, output, _truncated, _backend = await self._run_sub_query(
                 prompt=prompt,
                 context_slice=context_slice,
                 context_id=context_id,
                 backend=backend,
-                validation_regex=validate_regex,
+                validation_regex=validation_regex,
                 max_retries=max_retries,
                 retry_prompt=retry_prompt,
             )
-
             if not success:
-                if format == "raw":
-                    return f"[ERROR: sub_query failed: {output}]"
-                return f"## Sub-Query Error\n\n**Backend:** `{resolved_backend}`\n\n{output}"
-
-            if format == "raw":
-                return output
-
-            parts = [
-                "## Sub-Query Result",
-                "",
-                f"**Backend:** `{resolved_backend}`",
-            ]
-            if truncated:
-                parts.append(f"*Note: Context was truncated to {self.sub_query_config.max_context_chars:,} chars*")
-            parts.extend(["", "---", "", output])
-
-            return "\n".join(parts)
-
-        # =====================================================================
-        # Sub-Aleph tool (nested RLM recursion)
-        # =====================================================================
+                return f"Error: sub_query failed: {output}"
+            return output
 
         @_tool()
         async def sub_aleph(
             query: str,
             context_slice: str | None = None,
             context_id: str = "default",
-            root_model: str | None = None,
-            sub_model: str | None = None,
-            max_depth: int | None = None,
-            max_iterations: int | None = None,
             max_tokens: int | None = None,
-            max_sub_queries: int | None = None,
-            max_wall_time_seconds: float | None = None,
-            temperature: float | None = None,
-            format: Literal["markdown", "raw"] = "markdown",
+            max_depth: int | None = None,
         ) -> str:
-            """Run a nested Aleph call (RLM recursion).
-
-            Use this when you want the sub-agent to have full Aleph capabilities
-            (exec_python, sub_query, and deeper sub_aleph) instead of a single
-            LLM response. Backend selection follows ALEPH_SUB_QUERY_BACKEND
-            ("auto" defaults to CLI). When a CLI backend is selected, this runs
-            as a single-shot "act like Aleph" call without a live REPL; use the
-            API backend for full looped execution.
-
-            Args:
-                query: The question/task for the nested Aleph run
-                context_slice: Optional context to include (defaults to loaded context)
-                context_id: Session to source context from (if context_slice is None)
-                root_model: Override the root model for this call
-                sub_model: Override the sub-model for recursive calls
-                max_depth: Override max recursion depth
-                max_iterations: Override max iterations
-                max_tokens: Override max token budget
-                max_sub_queries: Override max sub-query count
-                max_wall_time_seconds: Override wall-time budget
-                temperature: Override model temperature
-                format: "markdown" or "raw" output
-
-            Returns:
-                Nested Aleph response (answer or formatted metadata + answer)
-            """
-            session = self._sessions.get(context_id)
-            response, meta = await self._run_sub_aleph(
+            """Recursively solve a sub-problem using Aleph."""
+            response, _meta = await self._run_sub_aleph(
                 query=query,
                 context_slice=context_slice,
                 context_id=context_id,
-                current_depth=session.max_depth_seen + 1 if session else 1,
-                root_model=root_model,
-                sub_model=sub_model,
-                max_depth=max_depth,
-                max_iterations=max_iterations,
                 max_tokens=max_tokens,
-                max_sub_queries=max_sub_queries,
-                max_wall_time_seconds=max_wall_time_seconds,
-                temperature=temperature,
+                max_depth=max_depth,
             )
-
-            if not response.success:
-                error_text = response.error or "Unknown error"
-                if format == "raw":
-                    return f"[ERROR: sub_aleph failed: {error_text}]"
-                return (
-                    "## Sub-Aleph Error\n\n"
-                    f"**Error Type:** `{response.error_type or 'unknown'}`\n\n"
-                    f"{error_text}"
-                )
-
-            if format == "raw":
-                return response.answer
-
-            budget = cast(Budget, meta["budget"])
-            is_cli = meta["backend"] in CLI_BACKENDS
-            parts = [
-                "## Sub-Aleph Result",
-                "",
-            ]
-            if not is_cli:
-                parts.append(f"**Models:** root=`{meta['root_model']}` sub=`{meta['sub_model']}`")
-            parts.extend([
-                f"**Backend:** `{meta['backend']}`",
-                f"**Depth reached:** {response.max_depth_reached}",
-                f"**Iterations:** {response.total_iterations}",
-            ])
-            if budget.max_depth is not None:
-                parts.append(f"**Max depth:** {budget.max_depth}")
-            if budget.max_sub_queries is not None:
-                parts.append(f"**Max sub-queries:** {budget.max_sub_queries}")
-            if meta.get("truncated_context"):
-                parts.append(f"*Note: Context was truncated to {self.sub_query_config.max_context_chars:,} chars*")
-            if not is_cli:
-                parts.extend([
-                    f"**Tokens:** {response.total_tokens}",
-                    f"**Cost:** ${response.total_cost_usd:.4f}",
-                ])
-            parts.extend([
-                f"**Wall time:** {response.wall_time_seconds:.2f}s",
-                "",
-                "---",
-                "",
-                response.answer,
-            ])
-            return "\n".join(parts)
-
-        @_tool()
-        async def configure(
-            sub_query_backend: str | None = None,
-            sub_query_timeout: float | None = None,
-            sub_query_share_session: bool | None = None,
-            output: Literal["json", "markdown", "object"] = "markdown",
-        ) -> str | dict[str, Any]:
-            """Change Aleph configuration at runtime.
-
-            Args:
-                sub_query_backend: Backend override ("auto", "api", "claude", "codex", "gemini")
-                sub_query_timeout: Timeout in seconds for CLI/API sub-queries
-                sub_query_share_session: Share live MCP session with CLI sub-agents
-                output: Output format (json, markdown, object)
-
-            Returns:
-                The updated configuration snapshot
-            """
-            if (
-                sub_query_backend is None
-                and sub_query_timeout is None
-                and sub_query_share_session is None
-            ):
-                return _format_payload(self._get_sub_query_config_snapshot(), output=output)
-
-            ok, message = self._apply_sub_query_runtime_config(
-                sub_query_backend=sub_query_backend,
-                sub_query_timeout=sub_query_timeout,
-                sub_query_share_session=sub_query_share_session,
-            )
-            if not ok:
-                return _format_error(message, output=output)
-
-            payload = self._get_sub_query_config_snapshot()
-            payload["status"] = "updated"
-            return _format_payload(payload, output=output)
-
-        # =====================================================================
-        # Remote MCP orchestration (v0.5 last mile)
-        # =====================================================================
-
-        @_tool()
-        async def add_remote_server(
-            server_id: str,
-            command: str,
-            args: list[str] | None = None,
-            cwd: str | None = None,
-            env: dict[str, str] | None = None,
-            allow_tools: list[str] | None = None,
-            deny_tools: list[str] | None = None,
-            connect: bool = True,
-            confirm: bool = False,
-            output: Literal["json", "markdown", "object"] = "markdown",
-        ) -> str | dict[str, Any]:
-            """Register a remote MCP server (stdio transport) for orchestration.
-
-            This spawns a subprocess and speaks MCP over stdin/stdout.
-
-            Args:
-                server_id: Local identifier for the remote server
-                command: Executable to run (e.g. 'python3')
-                args: Command arguments (e.g. ['-m','some.mcp.server'])
-                cwd: Working directory for the subprocess
-                env: Extra environment variables for the subprocess
-                allow_tools: Optional allowlist of tool names
-                deny_tools: Optional denylist of tool names
-                connect: If true, connect immediately and cache tool list
-                confirm: Required if actions are enabled
-                output: Output format
-            """
-            err = _require_actions(confirm)
-            if err:
-                return _format_error(err, output=output)
-
-            if server_id in self._remote_servers:
-                return _format_error(f"Remote server '{server_id}' already exists.", output=output)
-
-            handle = _RemoteServerHandle(
-                command=command,
-                args=args or [],
-                cwd=Path(cwd) if cwd else None,
-                env=env,
-                allow_tools=allow_tools,
-                deny_tools=deny_tools,
-            )
-            self._remote_servers[server_id] = handle
-
-            tools: list[dict[str, Any]] | None = None
-            if connect:
-                ok, res = await self._ensure_remote_server(server_id)
-                if not ok:
-                    return _format_error(str(res), output=output)
-                if not isinstance(res, _RemoteServerHandle):
-                    return _format_error(str(res), output=output)
-                handle = res
-                session = handle.session
-                if session is None:
-                    tools = None
-                else:
-                    try:
-                        r = await session.list_tools()
-                        tools = _to_jsonable(r)
-                    except Exception:
-                        tools = None
-
-            payload: dict[str, Any] = {
-                "server_id": server_id,
-                "command": command,
-                "args": args or [],
-                "cwd": str(handle.cwd) if handle.cwd else None,
-                "allow_tools": allow_tools,
-                "deny_tools": deny_tools,
-                "connected": handle.session is not None,
-                "tools": tools,
-            }
-            return _format_payload(payload, output=output)
-
-        @_tool()
-        async def list_remote_servers(
-            output: Literal["json", "markdown", "object"] = "json",
-        ) -> str | dict[str, Any]:
-            """List all registered remote MCP servers."""
-            items = []
-            for sid, h in self._remote_servers.items():
-                items.append(
-                    {
-                        "server_id": sid,
-                        "command": h.command,
-                        "args": h.args,
-                        "cwd": str(h.cwd) if h.cwd else None,
-                        "connected": h.session is not None,
-                        "connected_at": h.connected_at.isoformat() if h.connected_at else None,
-                        "allow_tools": h.allow_tools,
-                        "deny_tools": h.deny_tools,
-                    }
-                )
-            return _format_payload({"count": len(items), "items": items}, output=output)
-
-        @_tool()
-        async def list_remote_tools(
-            server_id: str,
-            confirm: bool = False,
-            output: Literal["json", "markdown", "object"] = "json",
-        ) -> str | dict[str, Any]:
-            """List tools available on a remote MCP server."""
-            err = _require_actions(confirm)
-            if err:
-                return _format_error(err, output=output)
-
-            ok, res = await self._ensure_remote_server(server_id)
-            if not ok:
-                return _format_error(str(res), output=output)
-            ok2, tools = await self._remote_list_tools(server_id)
-            if not ok2:
-                return _format_error(str(tools), output=output)
-            return _format_payload(tools, output=output)
-
-        @_tool()
-        async def call_remote_tool(
-            server_id: str,
-            tool: str,
-            arguments: dict[str, Any] | None = None,
-            timeout_seconds: float | None = DEFAULT_REMOTE_TOOL_TIMEOUT_SECONDS,
-            confirm: bool = False,
-            output: Literal["json", "markdown", "object"] = "markdown",
-        ) -> str | dict[str, Any] | list[Any]:
-            """Call a tool on a remote MCP server.
-
-            Args:
-                server_id: Registered remote server ID
-                tool: Tool name
-                arguments: Tool arguments object
-                timeout_seconds: Tool call timeout (best-effort). Defaults to ALEPH_REMOTE_TOOL_TIMEOUT or 120s.
-                confirm: Required if actions are enabled
-                output: Output format
-            """
-            err = _require_actions(confirm)
-            if err:
-                return _format_error(err, output=output)
-
-            ok, res = await self._ensure_remote_server(server_id)
-            if not ok:
-                return _format_error(str(res), output=output)
-            ok2, result_jsonable = await self._remote_call_tool(
-                server_id=server_id,
-                tool=tool,
-                arguments=arguments,
-                timeout_seconds=timeout_seconds,
-            )
-            if not ok2:
-                return _format_error(str(result_jsonable), output=output)
-
-            if output == "object":
-                return cast(dict[str, Any] | list[Any], result_jsonable)
-            if output == "json":
-                return json.dumps(result_jsonable, ensure_ascii=False, indent=2)
-
-            parts = [
-                "## Remote Tool Result",
-                "",
-                f"**Server:** `{server_id}`",
-                f"**Tool:** `{tool}`",
-                "",
-                "```json",
-                json.dumps(result_jsonable, ensure_ascii=False, indent=2)[:10_000],
-                "```",
-            ]
-            return "\n".join(parts)
-
-        @_tool()
-        async def close_remote_server(
-            server_id: str,
-            confirm: bool = False,
-            output: Literal["json", "markdown", "object"] = "markdown",
-        ) -> str | dict[str, Any]:
-            """Close a remote MCP server connection (terminates subprocess)."""
-            err = _require_actions(confirm)
-            if err:
-                return _format_error(err, output=output)
-
-            ok, msg = await self._close_remote_server(server_id)
-            if output == "object":
-                return {"ok": ok, "message": msg}
-            if output == "json":
-                return json.dumps({"ok": ok, "message": msg}, indent=2)
-            return msg
-
-        @_tool()
-        async def chunk_context(
-            chunk_size: int = 2000,
-            overlap: int = 200,
-            context_id: str = "default",
-        ) -> str:
-            """Split context into chunks and return metadata for navigation.
-
-            Use this to understand how to navigate large documents systematically.
-            Returns chunk boundaries so you can peek specific chunks.
-
-            Args:
-                chunk_size: Characters per chunk (default: 2000)
-                overlap: Overlap between chunks (default: 200)
-                context_id: Context identifier
-
-            Returns:
-                JSON with chunk metadata (index, start_char, end_char, preview)
-            """
-            if context_id not in self._sessions:
-                return f"Error: No context loaded with ID '{context_id}'. Use load_context first."
-
-            session = self._sessions[context_id]
-            repl = session.repl
-            session.iterations += 1
-
-            fn = repl.get_variable("chunk")
-            if not callable(fn):
-                return "Error: chunk() helper is not available"
-
-            try:
-                chunks = fn(chunk_size, overlap)
-            except ValueError as e:
-                return f"Error: {e}"
-
-            # Build chunk metadata
-            chunk_meta = []
-            pos = 0
-            for i, chunk_text in enumerate(chunks):
-                chunk_meta.append({
-                    "index": i,
-                    "start_char": pos,
-                    "end_char": pos + len(chunk_text),
-                    "size": len(chunk_text),
-                    "preview": chunk_text[:100] + "..." if len(chunk_text) > 100 else chunk_text,
-                })
-                pos += len(chunk_text) - overlap if i < len(chunks) - 1 else len(chunk_text)
-
-            # Store in session for reference
-            session.chunks = chunk_meta
-
-            parts = [
-                "## Context Chunks",
-                "",
-                f"**Total chunks:** {len(chunks)}",
-                f"**Chunk size:** {chunk_size} chars",
-                f"**Overlap:** {overlap} chars",
-                "",
-                "### Chunk Map",
-                "",
-            ]
-
-            for cm in chunk_meta:
-                parts.append(f"- **Chunk {cm['index']}** ({cm['start_char']}-{cm['end_char']}): {cm['preview'][:60]}...")
-
-            parts.extend([
-                "",
-                "*Use `peek_context(start, end, unit='chars')` to view specific chunks.*",
-            ])
-
-            return "\n".join(parts)
+            return response.answer
 
         @_tool()
         async def evaluate_progress(
@@ -3883,209 +2542,234 @@ class AlephMCPServerLocal:
             confidence_score: float = 0.5,
             context_id: str = "default",
         ) -> str:
-            """Self-evaluate your progress to decide whether to continue or finalize.
+            """Self-evaluate your progress."""
+            if context_id not in self._sessions:
+                return f"Error: No context loaded with ID '{context_id}'."
 
-            Use this periodically to assess whether you have enough information
-            to answer the question, or if more exploration is needed.
+            session = self._sessions[context_id]
+            session.iterations += 1
 
-            Args:
-                current_understanding: Summary of what you've learned so far
-                remaining_questions: List of unanswered questions (if any)
-                confidence_score: Your confidence 0.0-1.0 in current understanding
-                context_id: Context identifier
-
-            Returns:
-                Structured evaluation with recommendation (continue/finalize)
-            """
-            if isinstance(remaining_questions, str):
-                remaining_questions = [remaining_questions]
-            if context_id in self._sessions:
-                session = self._sessions[context_id]
-                session.iterations += 1
-                session.confidence_history.append(confidence_score)
-
-            parts = [
-                "## Progress Evaluation",
-                "",
-                "**Current Understanding:**",
-                current_understanding,
-                "",
-            ]
-
+            res = ["## Progress Evaluation", "", f"**Current Understanding:** {current_understanding}", f"\n**Confidence Score:** {confidence_score:.2f}"]
             if remaining_questions:
-                parts.extend([
-                    "**Remaining Questions:**",
-                ])
-                for q in remaining_questions:
-                    parts.append(f"- {q}")
-                parts.append("")
+                res.append("\n**Remaining Questions:**")
+                if isinstance(remaining_questions, str):
+                    res.append(f"- {remaining_questions}")
+                else:
+                    for q in remaining_questions:
+                        res.append(f"- {q}")
 
-            parts.append(f"**Confidence Score:** {confidence_score:.1%}")
+            if confidence_score > 0.9:
+                res.append("\n*Confidence is high. Consider finalizing if the goal is met.*")
+            elif confidence_score < 0.3:
+                res.append("\n*Confidence is low. Try a different search pattern or tool.*")
 
-            # Analyze convergence
-            if context_id in self._sessions:
-                session = self._sessions[context_id]
-                parts.extend([
-                    "",
-                    "### Convergence Analysis",
-                    f"- Iterations: {session.iterations}",
-                    f"- Evidence collected: {len(session.evidence)}",
-                ])
-
-                if len(session.confidence_history) >= 2:
-                    trend = session.confidence_history[-1] - session.confidence_history[-2]
-                    trend_str = "increasing" if trend > 0 else "decreasing" if trend < 0 else "stable"
-                    parts.append(f"- Confidence trend: {trend_str} ({trend:+.1%})")
-
-                if session.information_gain:
-                    recent_gain = sum(session.information_gain[-3:]) if len(session.information_gain) >= 3 else sum(session.information_gain)
-                    parts.append(f"- Recent information gain: {recent_gain} evidence pieces (last 3 ops)")
-
-            # Recommendation
-            parts.extend([
-                "",
-                "---",
-                "",
-                "### Recommendation",
-            ])
-
-            if confidence_score >= 0.8:
-                parts.append("**READY TO FINALIZE** - High confidence achieved. Use `finalize()` to provide your answer.")
-            elif confidence_score >= 0.5 and not remaining_questions:
-                parts.append("**CONSIDER FINALIZING** - Moderate confidence with no remaining questions. You may finalize or continue exploring.")
-            else:
-                parts.append("**CONTINUE EXPLORING** - More investigation needed. Use `search_context`, `peek_context`, or `think` to gather more evidence.")
-
-            return "\n".join(parts)
+            return "\n".join(res)
 
         @_tool()
         async def summarize_so_far(
+            context_id: str = "default",
             include_evidence: bool = True,
             include_variables: bool = True,
             clear_history: bool = False,
-            context_id: str = "default",
         ) -> str:
-            """Compress reasoning history to manage context window.
-
-            Use this when your conversation is getting long to create a
-            condensed summary of your progress that can replace earlier context.
-
-            Args:
-                include_evidence: Include evidence citations in summary
-                include_variables: Include computed variables
-                clear_history: Clear think_history after summarizing (to save memory)
-                context_id: Context identifier
-
-            Returns:
-                Compressed reasoning trace
-            """
+            """Compress reasoning history to manage context window."""
             if context_id not in self._sessions:
-                return f"Error: No context loaded with ID '{context_id}'. Use load_context first."
+                return f"Error: No context loaded with ID '{context_id}'."
 
             session = self._sessions[context_id]
+            session.iterations += 1
 
-            parts = [
-                "## Context Summary",
-                "",
-                f"**Context ID:** `{context_id}`",
-                f"**Duration:** {datetime.now() - session.created_at}",
-                f"**Iterations:** {session.iterations}",
-                "",
-            ]
+            summary = f"Session '{context_id}' has run for {session.iterations} iterations."
+            summary += f" Context size: {session.meta.size_chars:,} chars."
 
-            # Reasoning history
-            if session.think_history:
-                parts.extend([
-                    "### Reasoning Steps",
-                ])
-                for i, q in enumerate(session.think_history[-5:], 1):
-                    parts.append(f"{i}. {q[:150]}{'...' if len(q) > 150 else ''}")
-                parts.append("")
-
-            if session.tasks:
-                counts = {
-                    "todo": sum(1 for t in session.tasks if t.get("status") == "todo"),
-                    "doing": sum(1 for t in session.tasks if t.get("status") == "doing"),
-                    "done": sum(1 for t in session.tasks if t.get("status") == "done"),
-                }
-                parts.extend([
-                    "### Tasks",
-                    f"Total: {len(session.tasks)} (todo: {counts['todo']}, doing: {counts['doing']}, done: {counts['done']})",
-                ])
-                for t in session.tasks[:5]:
-                    parts.append(f"- #{t.get('id')}: {t.get('title')} ({t.get('status')})")
-                parts.append("")
-
-            # Evidence summary
             if include_evidence and session.evidence:
-                parts.extend([
-                    "### Evidence Collected",
-                    f"Total: {len(session.evidence)} pieces",
-                    "",
-                ])
-                # Group by source
-                by_source: dict[str, int] = {}
-                for ev in session.evidence:
-                    by_source[ev.source] = by_source.get(ev.source, 0) + 1
-                for source, count in by_source.items():
-                    parts.append(f"- {source}: {count}")
-                parts.append("")
-
-                # Show key evidence
-                parts.append("**Key Evidence:**")
-                for ev in session.evidence[-5:]:  # Last 5
-                    snippet = ev.snippet[:100] + ("..." if len(ev.snippet) > 100 else "")
-                    note = f" (note: {ev.note})" if ev.note else ""
-                    parts.append(f"- [{ev.source}] {snippet}{note}")
-                parts.append("")
-
-            # Variables
+                summary += f"\nEvidence collected: {len(session.evidence)} items."
             if include_variables:
-                repl = session.repl
-                excluded = {
-                    "ctx",
-                    "peek",
-                    "lines",
-                    "search",
-                    "chunk",
-                    "cite",
-                    "line_number_base",
-                    "allowed_imports",
-                    "is_import_allowed",
-                    "blocked_names",
-                    "__builtins__",
-                }
-                variables = {
-                    k: v for k, v in repl._namespace.items()
-                    if k not in excluded and not k.startswith("_")
-                }
-                if variables:
-                    parts.extend([
-                        "### Computed Variables",
-                    ])
-                    for name, val in variables.items():
-                        val_str = str(val)[:100]
-                        parts.append(f"- `{name}` = {val_str}{'...' if len(str(val)) > 100 else ''}")
-                    parts.append("")
+                vars = [k for k in session.repl._namespace.keys() if not k.startswith("_")]
+                if vars:
+                    summary += f"\nVariables defined: {', '.join(vars)}."
 
-            # Convergence
-            if session.confidence_history:
-                latest = session.confidence_history[-1]
-                parts.extend([
-                    "### Convergence Status",
-                    f"- Latest confidence: {latest:.1%}",
-                    f"- Confidence history: {[f'{c:.0%}' for c in session.confidence_history[-5:]]}",
-                ])
+            return f"## Summary So Far\n\n{summary}\n\n*Use this summary to keep your focus sharp.*"
 
-            # Clear history if requested
-            if clear_history:
-                session.think_history = []
-                parts.extend([
-                    "",
-                    "*Reasoning history cleared to save memory.*",
-                ])
+    def _register_mcp_tools(self) -> None:
+        _tool = self._tool_decorator
 
-            return "\n".join(parts)
+        @_tool()
+        async def configure(
+            sub_query_backend: Literal["api", "claude", "codex", "gemini", "auto"] | None = None,
+            max_cmd_seconds: float | None = None,
+            tool_docs_mode: Literal["concise", "full"] | None = None,
+        ) -> str:
+            """Update runtime configuration."""
+            if sub_query_backend:
+                self.sub_query_config.backend = sub_query_backend
+            if max_cmd_seconds is not None:
+                self.action_config.max_cmd_seconds = max_cmd_seconds
+            if tool_docs_mode:
+                self.tool_docs_mode = tool_docs_mode
+
+            return "Configuration updated. Re-run `get_status` to see current values."
+
+        @_tool()
+        async def add_remote_server(
+            server_id: str,
+            command: str,
+            args: list[str] | None = None,
+            env: dict[str, str] | None = None,
+            cwd: str | None = None,
+            allow_tools: list[str] | None = None,
+            deny_tools: list[str] | None = None,
+            connect: bool = True,
+            confirm: bool = False,
+            output: Literal["markdown", "json", "object"] = "markdown",
+        ) -> str | dict[str, Any]:
+            """Register a remote MCP server (stdio transport)."""
+            err = self._require_actions(confirm)
+            if err:
+                return _format_error(err, output=output)
+
+            handle = _RemoteServerHandle(
+                command=command,
+                args=args or [],
+                env=env,
+                cwd=Path(cwd) if cwd else None,
+                allow_tools=allow_tools,
+                deny_tools=deny_tools,
+            )
+            self._remote_servers[server_id] = handle
+
+            if connect:
+                success, error_msg = await self._ensure_remote_server(server_id)
+                if not success:
+                    return _format_error(str(error_msg), output=output)
+
+            msg = f"Remote server '{server_id}' registered."
+            if output == "object":
+                return {"status": "success", "id": server_id}
+            if output == "json":
+                return json.dumps({"status": "success", "id": server_id})
+            return msg
+
+        @_tool()
+        async def list_remote_servers(
+            output: Literal["json", "markdown", "object"] = "json",
+        ) -> str | dict[str, Any]:
+            """List all registered remote MCP servers."""
+            items = []
+            for sid, handle in self._remote_servers.items():
+                items.append({
+                    "id": sid,
+                    "connected": handle.session is not None,
+                    "command": handle.command,
+                    "connected_at": handle.connected_at.isoformat() if handle.connected_at else None,
+                })
+
+            if output == "object":
+                return {"count": len(items), "items": items}
+            if output == "json":
+                return json.dumps({"count": len(items), "items": items}, indent=2)
+
+            res = [f"Found {len(items)} remote server(s):\n"]
+            for item in items:
+                status = "connected" if item["connected"] else "not connected"
+                res.append(f"- **{item['id']}** ({status}): `{item['command']}`")
+            return "\n".join(res)
+
+        @_tool()
+        async def list_remote_tools(
+            server_id: str,
+            confirm: bool = False,
+            output: Literal["json", "markdown", "object"] = "json",
+        ) -> str | dict[str, Any]:
+            """List tools available on a remote MCP server."""
+            success, handle_or_err = await self._ensure_remote_server(server_id)
+            if not success:
+                return _format_error(str(handle_or_err), output=output)
+
+            handle = cast(_RemoteServerHandle, handle_or_err)
+            assert handle.session is not None
+            tools = await handle.session.list_tools()
+
+            items = []
+            for t in tools.tools:
+                if self._remote_tool_allowed(handle, t.name):
+                    items.append({"name": t.name, "description": t.description})
+
+            if output == "object":
+                return {"server_id": server_id, "tools": items}
+            if output == "json":
+                return json.dumps({"server_id": server_id, "tools": items}, indent=2)
+
+            res = [f"Tools on '{server_id}':\n"]
+            for item in items:
+                res.append(f"- **{item['name']}**: {item['description']}")
+            return "\n".join(res)
+
+        @_tool()
+        async def call_remote_tool(
+            server_id: str,
+            tool: str,
+            arguments: dict[str, Any] | None = None,
+            recipe_id: str | None = None,
+            timeout_seconds: float = 30,
+            confirm: bool = False,
+            output: Literal["json", "markdown", "object"] = "markdown",
+        ) -> str | dict[str, Any]:
+            """Call a tool on a remote MCP server."""
+            success, handle_or_err = await self._ensure_remote_server(server_id)
+            if not success:
+                return _format_error(str(handle_or_err), output=output)
+
+            handle = cast(_RemoteServerHandle, handle_or_err)
+            if not self._remote_tool_allowed(handle, tool):
+                return _format_error(f"Tool '{tool}' is denied on server '{server_id}'", output=output)
+
+            assert handle.session is not None
+            try:
+                result = await handle.session.call_tool(tool, arguments or {})
+            except Exception as e:
+                return _format_error(f"Remote call failed: {e}", output=output)
+
+            if output == "object":
+                return {"result": result.content}
+            if output == "json":
+                return json.dumps({"result": [c.model_dump() for c in result.content]}, indent=2)
+
+            res = []
+            for c in result.content:
+                if getattr(c, "text", None):
+                    res.append(c.text)
+                else:
+                    res.append(str(c))
+            return "\n".join(res)
+
+        @_tool()
+        async def close_remote_server(
+            server_id: str,
+            confirm: bool = False,
+            output: Literal["json", "markdown", "object"] = "json",
+        ) -> str | dict[str, Any]:
+            """Close a remote MCP server connection."""
+            if server_id not in self._remote_servers:
+                return _format_error(f"Remote server '{server_id}' not registered.", output=output)
+
+            handle = self._remote_servers[server_id]
+            await self._reset_remote_server_handle(handle)
+
+            msg = f"Remote server '{server_id}' disconnected."
+            if output == "object":
+                return {"status": "success", "id": server_id}
+            if output == "json":
+                return json.dumps({"status": "success", "id": server_id})
+            return msg
+
+    def _register_tools(self) -> None:
+        """Register all MCP tools."""
+        self._register_core_tools()
+        self._register_action_tools()
+        self._register_query_tools()
+        self._register_reasoning_tools()
+        self._register_mcp_tools()
 
     async def run(self, transport: str = "stdio") -> None:
         """Run the MCP server."""
@@ -4094,26 +2778,22 @@ class AlephMCPServerLocal:
 
         await self.server.run_stdio_async()
 
-
-_mcp_instance: Any | None = None
-
-
-def _get_mcp_instance() -> Any:
-    global _mcp_instance
-    if _mcp_instance is None:
-        _mcp_instance = AlephMCPServerLocal().server
-    return _mcp_instance
-
-
-def __getattr__(name: str) -> Any:
-    if name == "mcp":
-        return _get_mcp_instance()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
 def main() -> None:
     """CLI entry point: `aleph` or `python -m aleph.mcp.local_server`"""
     import argparse
+    import functools
+
+    def _can_colorize_stream(stream: io.TextIOBase | None) -> bool:
+        if stream is None:
+            return False
+        try:
+            stream.fileno()
+        except Exception:
+            return False
+        return not getattr(stream, "closed", False)
+
+    def _enable_argparse_color() -> bool:
+        return _can_colorize_stream(sys.stdout) and _can_colorize_stream(sys.stderr)
 
     def _parse_bool_flag(value: str) -> bool:
         normalized = value.strip().lower()
@@ -4123,8 +2803,23 @@ def main() -> None:
             return False
         raise argparse.ArgumentTypeError("Expected a boolean value (true/false)")
 
-    parser = argparse.ArgumentParser(
-        description="Run Aleph as an MCP server for local AI reasoning"
+    class _SafeArgumentParser(argparse.ArgumentParser):
+        def _print_message(self, message: str, file: io.TextIOBase | None = None) -> None:
+            if message:
+                file = file or sys.stderr
+                try:
+                    file.write(message)
+                except (AttributeError, OSError, ValueError):
+                    pass
+
+    formatter_class = functools.partial(
+        argparse.HelpFormatter,
+        color=_enable_argparse_color(),
+    )
+    parser = _SafeArgumentParser(
+        description="Run Aleph as an MCP server for local AI reasoning",
+        color=_enable_argparse_color(),
+        formatter_class=formatter_class,
     )
     parser.add_argument(
         "--timeout",
